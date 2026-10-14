@@ -3,6 +3,10 @@
 # dependencies
 node_modules/
 
+# local npm cache/temp (redirected off the C: drive)
+.cache/
+.tmp/
+
 # Expo
 .expo/
 dist/
@@ -30,8 +34,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local env files — .env.example is the template and stays tracked
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +45,4 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+.npm-cache/

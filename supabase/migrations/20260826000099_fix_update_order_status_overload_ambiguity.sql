@@ -1,0 +1,22 @@
+-- Real bug, found live via the urgent-bug-report end-to-end test, not
+-- guessed: 20260826000098 added a p_reason parameter to
+-- update_order_status() via CREATE OR REPLACE — but Postgres resolves
+-- CREATE OR REPLACE by exact signature match, and (p_order_id,
+-- p_new_status, p_reason) is a DIFFERENT signature from the original
+-- (p_order_id, p_new_status). That migration therefore didn't replace
+-- the old function at all — it silently created a SECOND overload
+-- alongside it. From that point on, PostgREST's RPC endpoint could no
+-- longer resolve a 2-argument call (used by every existing caller that
+-- doesn't pass a reason — store staff advancing an order through
+-- confirmed/preparing/packed, and any other pre-existing call site) to
+-- either the exact 2-arg function or the 3-arg one with p_reason
+-- defaulted, and started rejecting every such call outright:
+-- "Could not choose the best candidate function between:
+-- update_order_status(p_order_id, p_new_status),
+-- update_order_status(p_order_id, p_new_status, p_reason)".
+--
+-- Fix: drop the old 2-arg overload. The 3-arg version (p_reason
+-- default null) already covers every existing call site — nothing
+-- else changes.
+
+drop function if exists update_order_status(uuid, order_status);
