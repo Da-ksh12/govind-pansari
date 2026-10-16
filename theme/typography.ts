@@ -1,3 +1,5 @@
+import type { TextStyle } from 'react-native';
+
 /**
  * Two-family type system:
  *  - Display (Playfair Display): screen titles, hero/banner headlines,
@@ -42,6 +44,15 @@ export const lineHeight = {
   display: 38,
   displayLg: 44,
 } as const;
+
+/**
+ * Fixed-width digits so a column of stock quantities, prices or
+ * financial metrics lines up — without this, most fonts render "1" and
+ * "0" at different widths, so numbers in a list visibly wobble out of
+ * alignment as they change (an animated stat especially). Spread this
+ * into a Text style alongside any of the styles below.
+ */
+export const tabularNums: { fontVariant: TextStyle['fontVariant'] } = { fontVariant: ['tabular-nums'] };
 
 /** Named text styles — prefer these over ad-hoc font/size combos. */
 export const textStyles = {

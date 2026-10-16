@@ -73,6 +73,7 @@ export default function AdminCategoriesScreen() {
         </View>
       )}
       <FlatList
+        style={{ flex: 1 }}
         data={hierarchical}
         keyExtractor={(c) => c.id}
         contentContainerStyle={styles.listContent}

@@ -109,7 +109,7 @@ export default function CategoryDetailScreen() {
               <ArrowLeft size={ICON_SIZE.md} color={colors.textPrimary} strokeWidth={ICON_STROKE} />
             </Pressable>
             <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-              <Pressable style={styles.circleButton} onPress={() => router.push('/(tabs)/search')}>
+              <Pressable style={styles.circleButton} onPress={() => router.push({ pathname: '/(tabs)/search', params: { autoFocus: '1' } } as never)}>
                 <Search size={ICON_SIZE.md} color={colors.textPrimary} strokeWidth={ICON_STROKE} />
               </Pressable>
               <Pressable style={styles.circleButton} onPress={() => router.push('/cart')}>

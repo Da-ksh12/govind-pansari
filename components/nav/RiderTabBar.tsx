@@ -41,7 +41,7 @@ export function RiderTabBar({ state, navigation }: BottomTabBarProps) {
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
       {RIDER_TABS.map(({ name, label, Icon }) => {
-        const route = state.routes.find((r) => r.name === name);
+        const route = state.routes.find((r: (typeof state.routes)[number]) => r.name === name);
         if (!route) return null;
         const focused = route.key === activeKey;
         const color = focused ? colors.primary : colors.textSecondary;

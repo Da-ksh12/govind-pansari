@@ -1,4 +1,10 @@
-import { useEffect, useCallback, useRef } from 'react';
+// Deliberately the first import in this file — see that module's own
+// comment for why: it must run before every other local module so a
+// crash during their evaluation (before React even mounts) is still
+// captured.
+import '../services/monitoring/sentry';
+import * as Sentry from '@sentry/react-native';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { Stack, router } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,6 +22,7 @@ import {
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { colors } from '../theme';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { OptionalBoundary } from '../components/OptionalBoundary';
 import { OfflineBanner } from '../components/ui/OfflineBanner';
 import { ToastHost } from '../components/ui/ToastHost';
 import { InAppNotificationBanner } from '../components/notifications/InAppNotificationBanner';
@@ -25,10 +32,12 @@ import { useAuthStore } from '../store/authStore';
 import { configureNotificationHandler } from '../services/notifications/pushRegistration';
 import { useNotificationResponseNavigation } from '../hooks/useNotificationResponseNavigation';
 
+const FONT_LOAD_TIMEOUT_MS = 8000;
+
 SplashScreen.preventAutoHideAsync().catch(() => {});
 configureNotificationHandler();
 
-export default function RootLayout() {
+function RootLayout() {
   useEffect(() => {
     useAuthStore.getState().initialize();
   }, []);
@@ -55,12 +64,12 @@ export default function RootLayout() {
     }
   }, [authStatus]);
 
-  const [playfairLoaded] = usePlayfair({
+  const [playfairLoaded, playfairError] = usePlayfair({
     PlayfairDisplay_500Medium,
     PlayfairDisplay_600SemiBold,
     PlayfairDisplay_700Bold,
   });
-  const [jakartaLoaded] = useJakarta({
+  const [jakartaLoaded, jakartaError] = useJakarta({
     PlusJakartaSans_400Regular,
     PlusJakartaSans_500Medium,
     PlusJakartaSans_600SemiBold,
@@ -68,22 +77,42 @@ export default function RootLayout() {
     PlusJakartaSans_800ExtraBold,
   });
 
-  const fontsReady = playfairLoaded && jakartaLoaded;
+  // A font that fails to load, or never settles, must not leave the
+  // splash screen up forever with nothing rendered behind it: report the
+  // failure and continue with the platform's fallback font instead.
+  const [fontWaitExpired, setFontWaitExpired] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setFontWaitExpired(true), FONT_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const fontError = playfairError ?? jakartaError;
+  useEffect(() => {
+    if (fontError) {
+      // eslint-disable-next-line no-console
+      console.error('Font loading failed; continuing with system fonts:', fontError);
+      Sentry.captureException(fontError);
+    }
+  }, [fontError]);
+
+  const fontsReady = (playfairLoaded || !!playfairError) && (jakartaLoaded || !!jakartaError);
+  const readyToRender = fontsReady || fontWaitExpired;
 
   useEffect(() => {
-    if (fontsReady) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsReady]);
+    if (readyToRender) SplashScreen.hideAsync().catch(() => {});
+  }, [readyToRender]);
 
   const onLayoutRootView = useCallback(() => {}, []);
 
-  if (!fontsReady) return null;
+  if (!readyToRender) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <SafeAreaProvider>
         <BottomSheetModalProvider>
           <StatusBar style="dark" />
-          <OfflineBanner />
+          <OptionalBoundary name="OfflineBanner">
+            <OfflineBanner />
+          </OptionalBoundary>
           <ErrorBoundary>
             <Stack
               screenOptions={{
@@ -105,13 +134,26 @@ export default function RootLayout() {
                 options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
               />
             </Stack>
-            <InAppNotificationBanner />
-            <NewDeliveryPrompt />
-            <CartFlyOverlay />
-            <ToastHost />
+            <OptionalBoundary name="InAppNotificationBanner">
+              <InAppNotificationBanner />
+            </OptionalBoundary>
+            <OptionalBoundary name="NewDeliveryPrompt">
+              <NewDeliveryPrompt />
+            </OptionalBoundary>
+            <OptionalBoundary name="CartFlyOverlay">
+              <CartFlyOverlay />
+            </OptionalBoundary>
+            <OptionalBoundary name="ToastHost">
+              <ToastHost />
+            </OptionalBoundary>
           </ErrorBoundary>
         </BottomSheetModalProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+
+// Sentry.wrap adds navigation/route breadcrumbs and a final top-level
+// error boundary of its own (belt-and-braces alongside the app's own
+// ErrorBoundary below) — a no-op if EXPO_PUBLIC_SENTRY_DSN isn't set.
+export default Sentry.wrap(RootLayout);

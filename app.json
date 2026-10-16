@@ -7,7 +7,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "backgroundColor": "#FBF3E6",
     "ios": {
       "supportsTablet": true,
@@ -64,7 +63,8 @@
           "photosPermission": "Govind Pansari uses your photo library to let store admins upload product photos.",
           "cameraPermission": "Govind Pansari uses your camera so riders can capture a photo proof of delivery."
         }
-      ]
+      ],
+      "@sentry/react-native/expo"
     ],
     "experiments": {
       "typedRoutes": true

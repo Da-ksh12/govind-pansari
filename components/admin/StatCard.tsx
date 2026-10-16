@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react-native';
-import { colors, radius, shadows, spacing, textStyles } from '../../theme';
+import { colors, radius, shadows, spacing, textStyles, tabularNums } from '../../theme';
 import { duration } from '../../theme/motion';
 import { ICON_SIZE, ICON_STROKE } from '../../theme/icons';
 import { AnimatedNumber } from '../motion/AnimatedNumber';
@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
   },
   iconChip: { width: 38, height: 38, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
   label: { ...textStyles.caption, color: colors.textSecondary, fontSize: 12 },
-  value: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary, marginTop: 4 },
+  value: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary, marginTop: 4, ...tabularNums },
   trendRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: spacing.sm },
   trendText: { ...textStyles.caption, fontSize: 11.5, fontFamily: 'PlusJakartaSans_700Bold' },
   trendLabel: { ...textStyles.caption, fontSize: 11, color: colors.textMuted },

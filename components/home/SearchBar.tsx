@@ -119,7 +119,7 @@ export const SearchBar = forwardRef<TextInput, SearchBarProps>(function SearchBa
   if (editable) return content;
 
   return (
-    <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.wrapper} hitSlop={4}>
+    <Pressable onPress={() => router.push({ pathname: '/(tabs)/search', params: { autoFocus: '1' } } as never)} style={styles.wrapper} hitSlop={4}>
       {content}
     </Pressable>
   );

@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AlertTriangle, Boxes, IndianRupee, Package, PackageX, Search, Store as StoreIcon } from 'lucide-react-native';
-import { colors, radius, shadows, spacing, textStyles } from '../../theme';
+import { colors, radius, shadows, spacing, textStyles, tabularNums } from '../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../theme/icons';
 import { AdminShell } from '../../components/admin/AdminShell';
 import { StatCard } from '../../components/admin/StatCard';
 import { StatusBadge } from '../../components/admin/StatusBadge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { AppImage } from '../../components/ui/AppImage';
-import { formatINR } from '../../components/ui/PriceBlock';
+import { formatINR, formatCompactINR } from '../../components/ui/PriceBlock';
 import { useAdminStore } from '../../store/adminStore';
 import { useUIStore } from '../../store/uiStore';
 import { adminRepository, type AdminInventoryRow } from '../../services/repositories/adminRepository';
@@ -65,7 +65,15 @@ export default function AdminInventoryScreen() {
           <StatCard label="Total SKUs" value={stats.totalSkus} icon={Boxes} />
           <StatCard label="Low Stock" value={stats.lowStock} icon={AlertTriangle} tone={stats.lowStock > 0 ? 'warning' : 'default'} onPress={() => setLowStockOnly(true)} />
           <StatCard label="Out of Stock" value={stats.outOfStock} icon={PackageX} tone={stats.outOfStock > 0 ? 'error' : 'default'} onPress={() => setLowStockOnly(true)} />
-          <StatCard label="Stock Value" value={formatINR(stats.totalValue)} icon={IndianRupee} />
+          {/* Compact (₹14.45 Cr style) so one long figure never forces
+              this card wider than its neighbours — the exact value is
+              still a tap away, never only available in compact form. */}
+          <StatCard
+            label="Stock Value"
+            value={formatCompactINR(stats.totalValue)}
+            icon={IndianRupee}
+            onPress={() => Alert.alert('Exact Stock Value', formatINR(stats.totalValue))}
+          />
         </View>
       )}
 
@@ -74,8 +82,13 @@ export default function AdminInventoryScreen() {
           <Search size={ICON_SIZE.sm} color={colors.textMuted} strokeWidth={ICON_STROKE} />
           <TextInput style={styles.searchInput} placeholder="Search by product name or SKU" placeholderTextColor={colors.textMuted} value={search} onChangeText={setSearch} onSubmitEditing={load} returnKeyType="search" />
         </View>
-        <View style={styles.storeRow}>
-          <StoreIcon size={ICON_SIZE.xs} color={colors.textMuted} strokeWidth={ICON_STROKE} />
+        {/* Horizontally scrollable, not wrapping — with 3+ real stores
+            plus "All Stores" this used to wrap onto 2+ lines on a phone
+            width, which is what was pushing the header/filter region to
+            take up most of the screen before the inventory list ever
+            got a chance to render. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storeRow}>
+          <StoreIcon size={ICON_SIZE.xs} color={colors.textMuted} strokeWidth={ICON_STROKE} style={styles.storeRowIcon} />
           <Pressable style={[styles.filterChip, !storeId && styles.filterChipActive]} onPress={() => setStoreId(null)}>
             <Text style={[styles.filterChipText, !storeId && styles.filterChipTextActive]}>All Stores</Text>
           </Pressable>
@@ -84,7 +97,7 @@ export default function AdminInventoryScreen() {
               <Text style={[styles.filterChipText, storeId === s.id && styles.filterChipTextActive]} numberOfLines={1}>{s.name}</Text>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
         <Pressable style={[styles.filterChip, styles.lowStockChip, lowStockOnly && styles.lowStockChipActive]} onPress={() => setLowStockOnly((v) => !v)}>
           <AlertTriangle size={ICON_SIZE.xs} color={lowStockOnly ? colors.white : colors.textSecondary} strokeWidth={ICON_STROKE} />
           <Text style={[styles.filterChipText, lowStockOnly && styles.filterChipTextActive]}>Low / out of stock only</Text>
@@ -92,6 +105,7 @@ export default function AdminInventoryScreen() {
       </View>
 
       <FlatList
+        style={{ flex: 1 }}
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.listContent}
@@ -202,7 +216,8 @@ const styles = StyleSheet.create({
   toolbar: { padding: spacing.lg, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
   searchBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, maxWidth: 480 },
   searchInput: { flex: 1, ...textStyles.bodySmall, color: colors.textPrimary, outlineStyle: 'none' as never },
-  storeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  storeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: spacing.lg },
+  storeRowIcon: { marginRight: 2 },
   filterChip: { paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.surfaceSunken },
   filterChipActive: { backgroundColor: colors.primary },
   filterChipText: { ...textStyles.caption, color: colors.textSecondary },
@@ -217,8 +232,8 @@ const styles = StyleSheet.create({
   rowPressed: { backgroundColor: colors.surfaceMuted, borderColor: colors.borderStrong },
   thumb: { width: 52, height: 52, borderRadius: radius.sm },
   productName: { ...textStyles.cardTitle, fontSize: 14, color: colors.textPrimary },
-  meta: { ...textStyles.caption, color: colors.textSecondary, marginTop: 2 },
-  qty: { ...textStyles.bodySmall, color: colors.textPrimary, fontFamily: 'PlusJakartaSans_700Bold' },
+  meta: { ...textStyles.caption, color: colors.textSecondary, marginTop: 2, ...tabularNums },
+  qty: { ...textStyles.bodySmall, color: colors.textPrimary, fontFamily: 'PlusJakartaSans_700Bold', ...tabularNums },
   healthTrack: { height: 3, borderRadius: 2, backgroundColor: colors.divider, marginTop: spacing.sm, overflow: 'hidden' },
   healthFill: { height: '100%', borderRadius: 2 },
   modalOverlay: { flexGrow: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },

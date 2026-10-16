@@ -117,6 +117,7 @@ export default function AdminDeliveriesScreen() {
 
       {view === 'list' ? (
         <FlatList
+          style={{ flex: 1 }}
           data={rows}
           keyExtractor={(r) => r.id}
           contentContainerStyle={styles.listContent}

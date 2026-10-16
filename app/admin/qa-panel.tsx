@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { ChevronDown, ChevronUp, RotateCcw, Send, Zap } from 'lucide-react-native';
+import { AlertTriangle, ChevronDown, ChevronUp, RotateCcw, Send, Zap } from 'lucide-react-native';
+import * as Sentry from '@sentry/react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../theme/icons';
 import { AdminShell } from '../../components/admin/AdminShell';
@@ -416,6 +417,25 @@ export default function QaPanelScreen() {
               );
             })}
             {orders.length === 0 && <Text style={styles.emptyText}>No demo orders yet — create one above.</Text>}
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Crash Reporting</Text>
+            <Text style={styles.cardHint}>
+              Sends one real test error to Sentry (services/monitoring/sentry.ts) — the same path a real crash
+              reports through. Confirms EXPO_PUBLIC_SENTRY_DSN is actually configured and events are reaching your
+              Sentry project, without waiting for a real bug. Check your Sentry dashboard within a minute or two.
+            </Text>
+            <Pressable
+              style={styles.dangerBtn}
+              onPress={() => {
+                Sentry.captureException(new Error('QA panel test error — safe to ignore, confirms crash reporting is wired up.'));
+                showToast('Test error sent to Sentry.', 'success');
+              }}
+            >
+              <AlertTriangle size={14} color={colors.error} strokeWidth={ICON_STROKE} />
+              <Text style={styles.dangerBtnText}>Send Test Error to Sentry</Text>
+            </Pressable>
           </View>
 
           <View style={[styles.card, styles.dangerCard]}>

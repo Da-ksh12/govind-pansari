@@ -63,6 +63,7 @@ export default function AdminStaffScreen() {
       </View>
 
       <FlatList
+        style={{ flex: 1 }}
         data={staff}
         keyExtractor={(s) => s.id}
         contentContainerStyle={styles.listContent}

@@ -47,6 +47,7 @@ export default function AdminCustomersScreen() {
         </View>
       </View>
       <FlatList
+        style={{ flex: 1 }}
         data={customers}
         keyExtractor={(c) => c.id}
         contentContainerStyle={styles.listContent}

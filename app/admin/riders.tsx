@@ -56,6 +56,7 @@ export default function AdminRidersScreen() {
         <StatCard label="Inactive" value={inactive} icon={Truck} />
       </View>
       <FlatList
+        style={{ flex: 1 }}
         data={riders}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.listContent}

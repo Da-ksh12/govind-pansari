@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
+import * as Sentry from '@sentry/react-native';
 import { RefreshCw, TriangleAlert } from 'lucide-react-native';
 import { colors, radius, spacing, textStyles } from '../theme';
 import { ICON_SIZE, ICON_STROKE } from '../theme/icons';
@@ -32,9 +33,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // eslint-disable-next-line no-console
     console.error('Unhandled render error:', error, info.componentStack);
-    // Surfaced on-screen too (see render) — a screenshot of this
-    // screen is the only diagnostic this app ever gets from a
-    // real device once installed; there is no remote crash reporting.
+    // Also surfaced on-screen below, and — when EXPO_PUBLIC_SENTRY_DSN is
+    // configured (services/monitoring/sentry.ts) — reported to Sentry
+    // with the component stack attached, so a real device's crash is no
+    // longer only a screenshot someone has to manually send back.
+    Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } });
     this.setState({ componentStack: info.componentStack ?? null });
   }
 

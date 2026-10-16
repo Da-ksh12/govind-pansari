@@ -25,7 +25,7 @@ const WIDE_BREAKPOINT = 900;
 const SEARCH_DEBOUNCE_MS = 300;
 
 export default function SearchScreen() {
-  const { q } = useLocalSearchParams<{ q?: string }>();
+  const { q, autoFocus } = useLocalSearchParams<{ q?: string; autoFocus?: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
   const reducedMotion = useReducedMotion();
@@ -57,28 +57,37 @@ export default function SearchScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  // Root cause of "keyboard doesn't reliably open": this screen used to
-  // rely solely on TextInput's `autoFocus` prop, which fires at mount
-  // time — often *during* the screen's own slide-in transition, before
-  // the native input is actually attached/laid out in the window, so
-  // Android silently drops the focus() call. That's exactly the
-  // "sometimes works" signature, not a permanently broken input.
-  // useFocusEffect fires once this screen is genuinely the active one
-  // (after the transition settles, not at mount), and
+  // Root cause of "keyboard doesn't reliably open" (for the cases that
+  // DO want it to open automatically): this screen used to rely solely
+  // on TextInput's `autoFocus` prop, which fires at mount time — often
+  // *during* the screen's own slide-in transition, before the native
+  // input is actually attached/laid out in the window, so Android
+  // silently drops the focus() call. useFocusEffect fires once this
+  // screen is genuinely the active one, and
   // InteractionManager.runAfterInteractions defers the actual .focus()
   // call until any in-flight animation/gesture has finished — a real
-  // React Native API built for exactly this ordering problem, not an
-  // arbitrary delay. Skipped on wide/desktop viewports, where this
-  // screen's own input isn't even rendered (DesktopHeader owns search
-  // there) and there's nothing to focus.
+  // React Native API built for exactly this ordering problem.
+  //
+  // This only runs for navigations that explicitly asked for it (the
+  // `autoFocus=1` param, set by the Home search teaser and the category
+  // page's search icon — real "I want to type now" gestures). A plain
+  // tap on the bottom tab bar's Search icon carries no such param, so it
+  // lands with no keyboard: auto-opening the keyboard the instant that
+  // tab becomes active was the actual cause of a reported "search bar
+  // jumps right after navigating" bug — the immediate keyboard pop
+  // forces an abrupt Android window resize right as the screen appears.
+  // The param is cleared via setParams right after consuming it, so
+  // returning to an already-open Search tab (back button, re-tapping the
+  // tab) never re-triggers it.
   useFocusEffect(
     useCallback(() => {
-      if (isWide) return;
+      if (isWide || autoFocus !== '1') return;
       const task = InteractionManager.runAfterInteractions(() => {
         searchInputRef.current?.focus();
+        router.setParams({ autoFocus: undefined });
       });
       return () => task.cancel();
-    }, [isWide]),
+    }, [isWide, autoFocus]),
   );
 
   // Debounced live suggestions (section 9) — waits for typing to pause

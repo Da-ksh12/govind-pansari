@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MapPin, Phone, Store } from 'lucide-react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
@@ -12,12 +12,22 @@ import { useUIStore } from '../../store/uiStore';
 import { adminRepository } from '../../services/repositories/adminRepository';
 import { pushAdmin } from '../../services/adminNav';
 
+const WIDE_BREAKPOINT = 900;
+
 export default function AdminStoresScreen() {
   const [stores, setStores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const hasPermission = useAdminStore((s) => s.hasPermission);
   const showToast = useUIStore((s) => s.showToast);
   const canManage = hasPermission('stores.manage');
+  const { width } = useWindowDimensions();
+  // Real multi-column layout via FlatList's own numColumns, not a manual
+  // flexWrap on contentContainerStyle — the previous approach left each
+  // card's available width uncalculated as far as FlatList's own cell
+  // measurement was concerned, which is what was breaking store names
+  // mid-word ("Govin / d Pans / ari") rather than wrapping them at a
+  // word boundary.
+  const numColumns = width >= WIDE_BREAKPOINT ? 2 : 1;
 
   const load = useCallback(() => {
     setLoading(true);
@@ -40,18 +50,26 @@ export default function AdminStoresScreen() {
   return (
     <AdminShell title="Stores" subtitle="Manage your physical store locations">
       <FlatList
+        style={{ flex: 1 }}
         data={stores}
+        key={numColumns}
+        numColumns={numColumns}
+        columnWrapperStyle={numColumns > 1 ? styles.columnWrapper : undefined}
         keyExtractor={(s) => s.id}
         contentContainerStyle={styles.listContent}
         refreshing={loading}
         onRefresh={load}
         ListEmptyComponent={!loading ? <EmptyState icon={Store} title="No stores" /> : null}
         renderItem={({ item }) => (
-          <Pressable style={styles.card} onPress={() => pushAdmin(`/admin/stores/${item.id}`)}>
+          <Pressable style={[styles.card, numColumns > 1 && styles.cardInColumn]} onPress={() => pushAdmin(`/admin/stores/${item.id}`)}>
             <View style={styles.headerRow}>
               <View style={styles.storeIconChip}>
                 <Store size={ICON_SIZE.sm} color={colors.primary} strokeWidth={ICON_STROKE} />
               </View>
+              {/* Name takes all remaining width and wraps naturally
+                  (never truncated — a store's full name matters), the
+                  badge sits at the end of the row so it can never
+                  overlap it regardless of how many lines the name takes. */}
               <Text style={styles.storeName}>{item.name}</Text>
               <StatusBadge status={item.is_active ? 'active' : 'inactive'} size="sm" />
             </View>
@@ -69,7 +87,14 @@ export default function AdminStoresScreen() {
             <View style={styles.footerRow}>
               <Text style={styles.metaText}>Accepting new orders</Text>
               {canManage ? (
-                <Switch value={item.is_accepting_orders} onValueChange={() => toggleAccepting(item)} trackColor={{ false: colors.border, true: colors.primary }} thumbColor={colors.white} />
+                <Switch
+                  value={item.is_accepting_orders}
+                  onValueChange={() => toggleAccepting(item)}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor={colors.white}
+                  accessibilityLabel={`${item.is_accepting_orders ? 'Stop' : 'Start'} accepting orders at ${item.name}`}
+                  accessibilityRole="switch"
+                />
               ) : (
                 <Text style={styles.metaText}>{item.is_accepting_orders ? 'Yes' : 'Paused'}</Text>
               )}
@@ -82,15 +107,20 @@ export default function AdminStoresScreen() {
 }
 
 const styles = StyleSheet.create({
-  listContent: { padding: spacing.lg, gap: spacing.md, flexDirection: 'row', flexWrap: 'wrap', maxWidth: 1200, width: '100%', alignSelf: 'center' },
+  listContent: { padding: spacing.lg, gap: spacing.md, maxWidth: 1200, width: '100%', alignSelf: 'center' },
+  columnWrapper: { gap: spacing.md },
   card: {
-    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: 6, flexGrow: 1, flexBasis: 360, maxWidth: 420,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: 6, marginBottom: spacing.md,
     borderWidth: 1, borderColor: colors.border, ...shadows.sm,
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 4 },
+  // Single-column rows get their own marginBottom above; in a 2-column
+  // row, FlatList's own `gap` on columnWrapperStyle handles horizontal
+  // spacing and each card just needs to fill its column evenly.
+  cardInColumn: { flex: 1, marginBottom: 0 },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: 4 },
   storeIconChip: { width: 34, height: 34, borderRadius: radius.sm, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center' },
-  storeName: { ...textStyles.cardTitle, fontSize: 16, color: colors.textPrimary, flex: 1 },
+  storeName: { ...textStyles.cardTitle, fontSize: 16, color: colors.textPrimary, flex: 1, flexShrink: 1 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { ...textStyles.caption, color: colors.textSecondary },
+  metaText: { ...textStyles.caption, color: colors.textSecondary, flexShrink: 1 },
   footerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.xs, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
 });

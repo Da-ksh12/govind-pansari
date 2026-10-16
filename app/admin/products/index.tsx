@@ -101,6 +101,7 @@ export default function AdminProductsScreen() {
       </View>
 
       <FlatList
+        style={{ flex: 1 }}
         data={products}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.listContent}

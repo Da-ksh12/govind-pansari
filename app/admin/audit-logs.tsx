@@ -35,6 +35,7 @@ export default function AdminAuditLogsScreen() {
   return (
     <AdminShell title="Audit Logs" subtitle="A record of every sensitive action taken in the admin panel">
       <FlatList
+        style={{ flex: 1 }}
         data={logs}
         keyExtractor={(l) => l.id}
         contentContainerStyle={styles.listContent}
