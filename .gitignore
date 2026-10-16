@@ -46,3 +46,7 @@ yarn-error.*
 /ios
 /android
 .npm-cache/
+
+# EAS-downloaded signing credentials (contain keystore passwords)
+/credentials.json
+/credentials/
