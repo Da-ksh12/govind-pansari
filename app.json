@@ -24,7 +24,8 @@
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "versionCode": 10
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -53,7 +54,9 @@
         {
           "icon": "./assets/android-icon-monochrome.png",
           "color": "#6E1423",
-          "sounds": ["./assets/sounds/rider_delivery_alert.wav"],
+          "sounds": [
+            "./assets/sounds/rider_delivery_alert.wav"
+          ],
           "mode": "production"
         }
       ],
@@ -64,7 +67,8 @@
           "cameraPermission": "Govind Pansari uses your camera so riders can capture a photo proof of delivery."
         }
       ],
-      "@sentry/react-native/expo"
+      "@sentry/react-native/expo",
+      "./plugins/withReleaseSigning"
     ],
     "experiments": {
       "typedRoutes": true
