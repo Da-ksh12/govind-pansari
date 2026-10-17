@@ -1,0 +1,52 @@
+name: Generate iOS project
+
+# Expo cannot generate ios/ on Windows. This runs `expo prebuild` for iOS on a
+# macOS runner and commits the generated folder back to the branch it ran on.
+# It does not install CocoaPods, build, sign, or upload anything.
+on:
+  push:
+    branches: [migration/native-ownership]
+    paths: ['.github/workflows/generate-ios-project.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate the iOS native project
+        run: CI=1 npx expo prebuild --platform ios --no-install
+
+      - name: Check the generated project
+        run: |
+          test -d ios
+          ls ios
+          grep -r "com.govindpansari.app" ios --include=project.pbxproj -l
+
+      - name: Commit and push ios/
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ios
+          if git diff --cached --quiet; then
+            echo "No iOS changes to commit."
+            exit 0
+          fi
+          git commit -m "Add generated iOS native project (Expo prebuild, SDK 57)" \
+            -m "Generated on a macOS GitHub Actions runner; Pods are not installed or committed." \
+            -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+          git push
