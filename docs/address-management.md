@@ -53,7 +53,15 @@ name/phone/address line 1/postal code. Postal code is stored but never
 used for serviceability — `check_serviceability()` is geography-only,
 per section 34.
 
-## Where coordinates come from
+## Update 2026-10-28 — structured addresses and the Google picker
+
+Add Address now has separate fields (house/flat no., floor, building, street, area, landmark, city, state, PIN, delivery
+instructions) and saves `formatted_address`, `place_id` and `geocode_source` with the coordinates; `address_line_1/2` are
+composed from the parts. The map picker (search while typing, GPS, tap/drag, confirm, live delivery check) can run on Google
+Maps Platform. Details, setup and the rules that keep a customer's typing safe from a geocoder:
+`docs/google-address-setup.md`. The older text below describes the first version.
+
+## Where coordinates come from (first version)
 
 There's no interactive map/pin-drop yet (see
 `docs/location-and-serviceability.md` — deliberately out of this

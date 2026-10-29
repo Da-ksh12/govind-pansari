@@ -4,6 +4,33 @@ Supabase Auth, phone number + OTP, India-only (+91) for now. No custom
 OTP system — Supabase's own phone provider issues and verifies every
 code; the app never generates, stores, or logs one.
 
+> **Production OTP delivery (Fast2SMS) and the Razorpay account switch are documented in
+> [production-sms-and-payments.md](production-sms-and-payments.md).** The section below describes the
+> QA/demo state (fixed-code test numbers), which must be removed before launch.
+
+## Public registration (mobile number + OTP)
+
+Anyone can create a customer account; there is no separate "sign up" screen.
+
+1. `app/login.tsx` ("Sign in or sign up") — enters a valid Indian mobile; `signInWithOtp({ phone })` (sign-up is
+   open: `disable_signup = false`, and the app never passes `shouldCreateUser: false`). Supabase Auth issues a code and
+   the `send-sms-hook` delivers it through Fast2SMS. At this point an **unconfirmed** `auth.users` row exists and there is
+   **no profile**.
+2. `app/otp.tsx` — `verifyOtp` checks the code. Confirming the phone creates the profile (trigger
+   `on_auth_user_phone_confirmed`, role `customer`, exactly once). A returning customer is signed in to the same account.
+3. `app/welcome.tsx` — a customer without a name (every new account) is sent here once; the name is saved to their own
+   profile (the only columns a customer may write are `full_name`, `email`, `avatar_url`). Relaunching before finishing
+   lands here again (`app/index.tsx`).
+4. Location, then the shop.
+
+Email sign-in codes are switched off for customers (`EMAIL_SIGN_IN_ENABLED` in `app/login.tsx`): Supabase allows only
+2 sign-in emails an hour (`rate_limit_email_sent`), so open registration would fail for the third person. Staff and
+riders use their own email + password screen (`/staff-login`).
+
+Checks: `tests/unit/public-registration.test.mjs` (the wiring), `supabase/tests/profile-after-verification.test.mjs`
+(profile only after verification, never twice) and `supabase/tests/new-customer-rights.test.mjs` (a self-registered
+customer cannot promote themselves or read anyone else's data). Both live probes roll back and leave no data.
+
 ## Dev/demo note: no SMS provider configured
 
 This project has no Twilio (or other SMS provider) account attached —

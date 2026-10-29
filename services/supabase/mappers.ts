@@ -25,7 +25,6 @@ import type {
   StockStatus,
   StoreRow,
 } from '../../types/supabase';
-import { categoryImg, productImg } from '../../data/images';
 
 const NEW_WINDOW_DAYS = 30;
 
@@ -61,7 +60,12 @@ function deriveBadges(row: ProductRow): ProductBadge[] {
 }
 
 export interface ToProductOptions {
-  /** stock_status per product_variant_id, from the product_availability view — only present when a storeId was given. */
+  /**
+   * stock_status per product_variant_id, from the product_availability view — only present when a storeId was given
+   * and the lookup succeeded. When present, a variant that is missing from it has no inventory row at that store:
+   * the store doesn't stock it, so it is out of stock there (previously it defaulted to "in stock", which let
+   * customers add items no store could supply and only learn so at checkout).
+   */
   availabilityByVariant?: Map<string, StockStatus>;
   rating?: ProductRatingRow;
   storeId?: string;
@@ -71,7 +75,7 @@ export function toProduct(row: ProductRow, options: ToProductOptions = {}): Prod
   const variantRows = row.product_variants ?? [];
   const variants = variantRows
     .filter((v) => v.is_active)
-    .map((v) => toProductVariant(v, options.availabilityByVariant?.get(v.id)));
+    .map((v) => toProductVariant(v, options.availabilityByVariant ? (options.availabilityByVariant.get(v.id) ?? 'out_of_stock') : undefined));
 
   const images = [row.image, ...(row.gallery ?? [])].filter((v): v is string => Boolean(v));
 
@@ -81,7 +85,12 @@ export function toProduct(row: ProductRow, options: ToProductOptions = {}): Prod
     name: row.name,
     descriptor: row.short_description ?? '',
     categoryId: row.category_id ?? '',
-    images: images.length > 0 ? images : [productImg(row.name)],
+    // Exactly the images that were uploaded — possibly none. A product
+    // without one used to be handed a stock photo chosen by matching its
+    // name against a keyword list, so every unmatched product shared the same
+    // unrelated picture. Consumers render AppImage with kind="product", which
+    // shows the neutral Govind Pansari "GP" tile for a missing image.
+    images,
     badges: deriveBadges(row),
     rating: options.rating?.rating ?? 0,
     reviewCount: options.rating?.review_count ?? 0,
@@ -106,7 +115,8 @@ export function toProduct(row: ProductRow, options: ToProductOptions = {}): Prod
 }
 
 export function toCategory(row: CategoryRow): Category {
-  const image = row.image_url ?? categoryImg(row.name);
+  // A category with no image keeps null — never a keyword-matched stock photo.
+  const image = row.image_url?.trim() ? row.image_url : null;
   return {
     id: row.id,
     slug: row.slug,

@@ -1,5 +1,6 @@
 import { supabase } from '../supabase/client';
 import { toCatalogueError } from '../supabase/errors';
+import { createStructuredColumnMemory, isMissingColumnError, withoutStructuredColumns } from '../addressPersistence';
 import type { Address } from '../../types/models';
 
 interface AddressRow {
@@ -15,6 +16,16 @@ interface AddressRow {
   latitude: number;
   longitude: number;
   is_default: boolean;
+  landmark: string | null;
+  house_no: string | null;
+  building: string | null;
+  floor: string | null;
+  street: string | null;
+  locality: string | null;
+  formatted_address: string | null;
+  place_id: string | null;
+  delivery_instructions: string | null;
+  geocode_source: 'google' | 'osm' | 'device' | 'manual' | null;
 }
 
 function toAddress(row: AddressRow): Address {
@@ -31,6 +42,16 @@ function toAddress(row: AddressRow): Address {
     isDefault: row.is_default,
     receiverName: row.recipient_name,
     receiverPhone: row.phone,
+    houseNo: row.house_no ?? undefined,
+    building: row.building ?? undefined,
+    floor: row.floor ?? undefined,
+    street: row.street ?? undefined,
+    locality: row.locality ?? undefined,
+    landmark: row.landmark ?? undefined,
+    formattedAddress: row.formatted_address ?? undefined,
+    placeId: row.place_id ?? undefined,
+    deliveryInstructions: row.delivery_instructions ?? undefined,
+    geocodeSource: row.geocode_source ?? undefined,
   };
 }
 
@@ -46,7 +67,22 @@ export interface AddressInput {
   pincode: string;
   lat: number;
   lng: number;
+  houseNo?: string;
+  building?: string;
+  floor?: string;
+  street?: string;
+  locality?: string;
+  formattedAddress?: string;
+  placeId?: string;
+  deliveryInstructions?: string;
+  geocodeSource?: 'google' | 'osm' | 'device' | 'manual';
 }
+
+/** Empty strings are stored as NULL: a blank field means "not provided", not an empty value. */
+const orNull = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
+
+/** Whether this database has the structured-address columns (see addressPersistence.ts); re-checked every few minutes. */
+const structuredColumns = createStructuredColumnMemory();
 
 export const addressRepository = {
   async list(): Promise<Address[]> {
@@ -77,24 +113,39 @@ export const addressRepository = {
 
     // RLS restricts writes to the caller's own user_id regardless, but
     // setting it explicitly keeps the insert self-describing.
-    const { data, error } = await supabase
-      .from('addresses')
-      .insert({
-        user_id: user.id,
-        label: input.label,
-        recipient_name: input.receiverName,
-        phone: input.receiverPhone,
-        address_line_1: input.line1,
-        address_line_2: input.line2 ?? null,
-        landmark: input.landmark ?? null,
-        city: input.city,
-        state: input.state,
-        postal_code: input.pincode,
-        latitude: input.lat,
-        longitude: input.lng,
-      })
-      .select('*')
-      .single();
+    const row: Record<string, unknown> = {
+      user_id: user.id,
+      label: input.label,
+      recipient_name: input.receiverName,
+      phone: input.receiverPhone,
+      address_line_1: input.line1,
+      address_line_2: input.line2 ?? null,
+      landmark: orNull(input.landmark),
+      city: input.city,
+      state: input.state,
+      postal_code: input.pincode,
+      latitude: input.lat,
+      longitude: input.lng,
+      house_no: orNull(input.houseNo),
+      building: orNull(input.building),
+      floor: orNull(input.floor),
+      street: orNull(input.street),
+      locality: orNull(input.locality),
+      formatted_address: orNull(input.formattedAddress),
+      place_id: orNull(input.placeId),
+      delivery_instructions: orNull(input.deliveryInstructions),
+      geocode_source: input.geocodeSource ?? null,
+    };
+
+    // A database that has not had the structured-address migration yet refuses the new columns (PGRST204) — that must never stop
+    // a customer saving their address. See services/addressPersistence.ts.
+    if (structuredColumns.shouldTryStructured()) {
+      const attempt = await supabase.from('addresses').insert(row).select('*').single();
+      if (!attempt.error) return toAddress(attempt.data as AddressRow);
+      if (!isMissingColumnError(attempt.error)) throw toCatalogueError(attempt.error);
+      structuredColumns.markMissing();
+    }
+    const { data, error } = await supabase.from('addresses').insert(withoutStructuredColumns(row)).select('*').single();
     if (error) throw toCatalogueError(error);
     return toAddress(data as AddressRow);
   },
@@ -112,8 +163,30 @@ export const addressRepository = {
     if (input.pincode !== undefined) patch.postal_code = input.pincode;
     if (input.lat !== undefined) patch.latitude = input.lat;
     if (input.lng !== undefined) patch.longitude = input.lng;
+    if (input.houseNo !== undefined) patch.house_no = orNull(input.houseNo);
+    if (input.building !== undefined) patch.building = orNull(input.building);
+    if (input.floor !== undefined) patch.floor = orNull(input.floor);
+    if (input.street !== undefined) patch.street = orNull(input.street);
+    if (input.locality !== undefined) patch.locality = orNull(input.locality);
+    if (input.formattedAddress !== undefined) patch.formatted_address = orNull(input.formattedAddress);
+    if (input.placeId !== undefined) patch.place_id = orNull(input.placeId);
+    if (input.deliveryInstructions !== undefined) patch.delivery_instructions = orNull(input.deliveryInstructions);
+    if (input.geocodeSource !== undefined) patch.geocode_source = input.geocodeSource;
 
-    const { data, error } = await supabase.from('addresses').update(patch).eq('id', id).select('*').single();
+    if (structuredColumns.shouldTryStructured()) {
+      const attempt = await supabase.from('addresses').update(patch).eq('id', id).select('*').single();
+      if (!attempt.error) return toAddress(attempt.data as AddressRow);
+      if (!isMissingColumnError(attempt.error)) throw toCatalogueError(attempt.error);
+      structuredColumns.markMissing();
+    }
+    const legacyPatch = withoutStructuredColumns(patch);
+    if (Object.keys(legacyPatch).length === 0) {
+      // Nothing but structured fields were being changed and this database cannot store them: leave the address as it is.
+      const { data, error } = await supabase.from('addresses').select('*').eq('id', id).single();
+      if (error) throw toCatalogueError(error);
+      return toAddress(data as AddressRow);
+    }
+    const { data, error } = await supabase.from('addresses').update(legacyPatch).eq('id', id).select('*').single();
     if (error) throw toCatalogueError(error);
     return toAddress(data as AddressRow);
   },

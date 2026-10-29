@@ -5,7 +5,7 @@ import type { LatLng } from '../types/models';
 import type { ServiceabilityResult } from '../services/repositories/storeRepository';
 
 export interface SelectedLocation {
-  label: string; // "Sanjay Place, Agra"
+  label: string; // e.g. "Vijay Nagar Colony, Agra" — only ever the customer's own pick, never a default
   addressLine: string;
   position: LatLng;
   /** Set when the selection came from a saved address rather than current-location/search. */

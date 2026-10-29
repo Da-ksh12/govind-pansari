@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AlertTriangle, ArrowLeft, Bike, Camera, Check, CheckCircle2, Circle, Clock, IndianRupee, MapPin, Navigation, Phone, Radar, User, XCircle } from 'lucide-react-native';
+import { AlertTriangle, ArrowLeft, Bike, Camera, Check, CheckCircle2, Circle, Clock, IndianRupee, MapPin, Navigation, Phone, User, XCircle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius, shadows, spacing, textStyles } from '../../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../../theme/icons';
@@ -14,19 +14,23 @@ import { formatINR } from '../../../components/ui/PriceBlock';
 import { useStoreOpsStore } from '../../../store/storeOpsStore';
 import {
   storeOpsRepository,
+  type AssignableRider,
   type CompletedDeliveryProof,
-  type DispatchRoundInfo,
-  type EligibleRider,
   type OrderDeliveryStatus,
   type OrderRejectionReason,
   type StoreOrderDetail,
   type StoreOrderItem,
 } from '../../../services/repositories/storeOpsRepository';
+import { describeAssignmentError } from '../../../services/assignmentErrors';
+import { canCancelAssignment, describeUnanswered, unansweredAttempt, type RiderAttempt } from '../../../services/riderAssignment';
+import { CancelAssignmentDialog } from '../../../components/dispatch/CancelAssignmentDialog';
+import { RiderDidNotAcceptNotice } from '../../../components/dispatch/RiderDidNotAcceptNotice';
+import { RiderPickerList } from '../../../components/dispatch/RiderPickerList';
 import { formatOrderAge } from '../../../services/timeAgo';
 import { useRefetchOnForeground } from '../../../hooks/useRefetchOnForeground';
 
 const DELIVERY_STAGE_LABEL: Record<string, string> = {
-  assigned: 'Waiting for rider to accept',
+  assigned: 'Waiting for the rider to accept',
   accepted: 'Rider is heading to the store',
   at_store: 'Rider has arrived at the store',
   picked_up: 'Rider has the order',
@@ -61,7 +65,7 @@ export default function StoreOrderDetailScreen() {
   const myStores = useStoreOpsStore((s) => s.myStores);
   const staffRole = myStores.find((s) => s.storeId === activeStoreId)?.staffRole;
   const isManager = staffRole === 'store_manager';
-  // Rider assignment (send/auto-assign/cancel/stop/reassign) is open to
+  // Rider assignment (choose/cancel/reassign) is open to
   // any active store staff member, not manager-only — client request.
   // Exception resolution and other manager-only actions still gate on
   // `isManager` specifically.
@@ -70,9 +74,17 @@ export default function StoreOrderDetailScreen() {
   const [order, setOrder] = useState<StoreOrderDetail | null>(null);
   const [delivery, setDelivery] = useState<OrderDeliveryStatus | null>(null);
   const [deliveryProof, setDeliveryProof] = useState<CompletedDeliveryProof | null>(null);
-  const [eligibleRiders, setEligibleRiders] = useState<EligibleRider[]>([]);
-  const [dispatchRound, setDispatchRound] = useState<DispatchRoundInfo | null>(null);
-  const [dispatchSecondsLeft, setDispatchSecondsLeft] = useState<number | null>(null);
+  const [riders, setRiders] = useState<AssignableRider[]>([]);
+  const [ridersLoading, setRidersLoading] = useState(false);
+  const [ridersError, setRidersError] = useState<string | null>(null);
+  const [busyRiderId, setBusyRiderId] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState<RiderAttempt[]>([]);
+  const [requestSecondsLeft, setRequestSecondsLeft] = useState<number | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  // The assignment this screen last saw waiting for an answer — when it ends in a decline/timeout while the
+  // manager is looking at the screen, they are asked straight away to choose again (once per assignment).
+  const watchedAssignmentId = useRef<string | null>(null);
+  const promptedAssignmentId = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -85,11 +97,11 @@ export default function StoreOrderDetailScreen() {
     if (!id) return;
     setLoading(true);
     setError(false);
-    Promise.all([storeOpsRepository.getOrderDetail(id), storeOpsRepository.getOrderDeliveryStatus(id), storeOpsRepository.getLatestDispatchRound(id)])
-      .then(([o, d, round]) => {
+    Promise.all([storeOpsRepository.getOrderDetail(id), storeOpsRepository.getOrderDeliveryStatus(id), storeOpsRepository.getOrderRiderAttempts(id).catch(() => [] as RiderAttempt[])])
+      .then(([o, d, history]) => {
         setOrder(o);
         setDelivery(d);
-        setDispatchRound(round);
+        setAttempts(history);
         if (o?.status === 'delivered') {
           storeOpsRepository.getDeliveryProof(id).then(setDeliveryProof).catch(() => setDeliveryProof(null));
         } else {
@@ -110,34 +122,56 @@ export default function StoreOrderDetailScreen() {
   }, [activeStoreId, load]);
   useRefetchOnForeground(load);
 
-  // A second, tighter realtime subscription just for the open dispatch
-  // round itself (section 11) — a rider accepting/declining/losing the
-  // race must reflect here within moments, not wait for the next
-  // store-activity event or a manual refresh.
-  useEffect(() => {
-    if (!dispatchRound || dispatchRound.status !== 'open') return;
-    return storeOpsRepository.subscribeToDispatchRound(dispatchRound.roundId, load);
-  }, [dispatchRound?.roundId, dispatchRound?.status, load]);
+  const loadRiders = useCallback(() => {
+    if (!id) return;
+    setRidersLoading(true);
+    setRidersError(null);
+    storeOpsRepository
+      .getRidersForAssignment(id)
+      .then(setRiders)
+      .catch(() => {
+        setRiders([]);
+        setRidersError("Couldn't load the riders. Check your connection and try again.");
+      })
+      .finally(() => setRidersLoading(false));
+  }, [id]);
 
-  // Real countdown against the round's own server expires_at — never a
-  // client-invented timer (section 8).
+  const openRiderSheet = () => {
+    riderSheetRef.current?.expand();
+    loadRiders();
+  };
+
+  // Real countdown against the request's own server deadline (expires_at) — how long the rider has left to
+  // accept — never a client-invented timer.
   useEffect(() => {
-    if (!dispatchRound || dispatchRound.status !== 'open') {
-      setDispatchSecondsLeft(null);
+    if (!delivery || delivery.status !== 'assigned' || !delivery.expiresAt) {
+      setRequestSecondsLeft(null);
       return;
     }
-    const tick = () => setDispatchSecondsLeft(Math.max(0, Math.round((new Date(dispatchRound.expiresAt).getTime() - Date.now()) / 1000)));
+    const expiresAt = new Date(delivery.expiresAt).getTime();
+    const tick = () => setRequestSecondsLeft(Math.max(0, Math.round((expiresAt - Date.now()) / 1000)));
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [dispatchRound?.expiresAt, dispatchRound?.status]);
+  }, [delivery?.assignmentId, delivery?.status, delivery?.expiresAt]);
 
-  const openRiderSheet = async () => {
-    if (!order) return;
-    riderSheetRef.current?.expand();
-    const riders = await storeOpsRepository.getEligibleRiders(order.id).catch(() => []);
-    setEligibleRiders(riders);
-  };
+  // "Ask again": when the rider this screen was waiting on declines or never answers, the manager is asked
+  // straight away to choose another one (the red card below stays until they do).
+  const notAccepted = order?.status === 'packed' ? unansweredAttempt(attempts, !!delivery) : null;
+  useEffect(() => {
+    if (delivery?.status === 'assigned') watchedAssignmentId.current = delivery.assignmentId;
+  }, [delivery?.assignmentId, delivery?.status]);
+  useEffect(() => {
+    if (!notAccepted || !canAssignRiders) return;
+    if (notAccepted.assignmentId !== watchedAssignmentId.current || promptedAssignmentId.current === notAccepted.assignmentId) return;
+    promptedAssignmentId.current = notAccepted.assignmentId;
+    const { title, detail } = describeUnanswered(notAccepted);
+    Alert.alert(title, `${detail}\n\nChoose another rider now?`, [
+      { text: 'Later', style: 'cancel' },
+      { text: 'Choose rider', onPress: openRiderSheet },
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notAccepted?.assignmentId, canAssignRiders]);
 
   const runAction = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -177,64 +211,56 @@ export default function StoreOrderDetailScreen() {
   const handlePickItem = (item: StoreOrderItem, status: 'picked' | 'unavailable') => {
     runAction(() => storeOpsRepository.markItemPicked(item.id, status));
   };
-  const handleResolveException = () => {
-    Alert.alert('Resolve exception', 'Confirm the item issue for this order has been sorted out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Resolve', onPress: () => runAction(() => storeOpsRepository.resolveException(order!.id)) },
+  // An unavailable item can no longer be "resolved" with a confirmation tap:
+  // that cleared the flag, left the item on the order and let it be packed,
+  // delivered and charged in full. The two real resolutions are below.
+  const handleReopenItem = (item: StoreOrderItem) => {
+    Alert.alert('Item found?', `Put ${item.productName} back to be picked? It will have to be picked before the order can be packed.`, [
+      { text: 'Not yet', style: 'cancel' },
+      { text: 'Yes, reopen', onPress: () => runAction(() => storeOpsRepository.reopenUnavailableItem(item.id)) },
     ]);
   };
-  const handleAssignRider = (riderId: string) => {
-    riderSheetRef.current?.close();
-    runAction(() => storeOpsRepository.assignRider(order!.id, riderId).then(() => undefined));
-  };
-  /** True automatic assignment (section 22/25) — server picks one eligible rider directly, no acceptance popup. Distinct from handleSendRider (broadcasts to every eligible rider). */
-  const handleAutoAssign = async () => {
-    if (!order) return;
-    riderSheetRef.current?.close();
-    setBusy(true);
-    try {
-      const result = await storeOpsRepository.startAutoAssignment(order.id);
-      if (result.code === 'AUTO_ASSIGNING') {
-        // No exception, no failure — just still looking; the round's
-        // own 'open'/mode='auto' state (polled via load() below) is
-        // what drives the "Finding a rider…" UI, not this result.
-      }
-      load();
-    } catch (e) {
-      Alert.alert('Something went wrong', e instanceof Error ? e.message : 'Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const handleStopAutoAssign = () => {
-    if (!dispatchRound) return;
-    Alert.alert('Stop auto-assignment?', 'The order stays Ready for Pickup — you can send it or assign a rider manually afterward.', [
-      { text: 'Keep Looking', style: 'cancel' },
-      { text: 'Stop', style: 'destructive', onPress: () => runAction(() => storeOpsRepository.stopAutoAssignment(dispatchRound.roundId)) },
+  const handleCancelForUnavailable = () => {
+    Alert.alert('Cancel this order?', 'The customer will be notified and the reserved stock released. This cannot be undone.', [
+      { text: 'Keep order', style: 'cancel' },
+      { text: 'Cancel order', style: 'destructive', onPress: () => runAction(() => storeOpsRepository.cancelOrder(order!.id, 'Item unavailable')) },
     ]);
   };
-  /** "Send Rider" (section 2) and "Reassign Rider" (section 12 — always a fresh round, never reviving an expired one) are the same call: start_dispatch_round() always creates a new round, incrementing round_number itself. */
-  const handleSendRider = async () => {
-    if (!order) return;
-    setBusy(true);
+  /** A person choosing a rider is the only way an order gets one. The server re-checks, under a row lock, that the order is still ready and the rider still free. */
+  const handleAssignRider = async (rider: AssignableRider) => {
+    if (!order || busyRiderId) return;
+    setBusyRiderId(rider.riderId);
     try {
-      const result = await storeOpsRepository.startDispatchRound(order.id);
-      if (!result.success) {
-        Alert.alert('No riders available', result.message ?? 'No eligible riders are currently available. Try again shortly or assign manually.');
-      }
+      await storeOpsRepository.assignRider(order.id, rider.riderId);
+      riderSheetRef.current?.close();
       load();
     } catch (e) {
-      Alert.alert('Something went wrong', e instanceof Error ? e.message : 'Please try again.');
+      const failure = describeAssignmentError(e);
+      Alert.alert("Couldn't assign this rider", failure.message);
+      if (failure.refresh) {
+        riderSheetRef.current?.close();
+        load();
+      } else {
+        loadRiders();
+      }
     } finally {
-      setBusy(false);
+      setBusyRiderId(null);
     }
   };
-  const handleCancelAssignment = () => {
+  /** After the second "yes": take the assignment back, then go straight to choosing a replacement. */
+  const handleConfirmCancel = async () => {
     if (!delivery) return;
-    Alert.alert('Cancel this rider assignment?', 'The order will return to Ready for Pickup so a new rider can be assigned.', [
-      { text: 'Keep', style: 'cancel' },
-      { text: 'Cancel Assignment', style: 'destructive', onPress: () => runAction(() => storeOpsRepository.cancelAssignment(delivery.assignmentId, 'reassigning')) },
-    ]);
+    try {
+      await storeOpsRepository.cancelAssignment(delivery.assignmentId, 'reassigning');
+    } catch (e) {
+      const failure = describeAssignmentError(e);
+      Alert.alert("Couldn't cancel the assignment", failure.message);
+      load();
+      return;
+    }
+    // The order is Ready for Pickup again: refresh it and open the rider list at once.
+    load();
+    openRiderSheet();
   };
 
   if (loading && !order) {
@@ -264,6 +290,8 @@ export default function StoreOrderDetailScreen() {
   }
 
   const pendingCount = order.items.filter((i) => i.pickingStatus === 'pending').length;
+  const unavailableCount = order.items.filter((i) => i.pickingStatus === 'unavailable').length;
+  const packingBlocked = order.status === 'picking' && (pendingCount > 0 || unavailableCount > 0 || order.hasException);
   const groupedItems = groupByCategory(order.items);
 
   return (
@@ -282,13 +310,22 @@ export default function StoreOrderDetailScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {order.hasException && (
+        {(order.hasException || unavailableCount > 0) && order.status !== 'cancelled' && (
           <View style={styles.exceptionBanner}>
             <AlertTriangle size={ICON_SIZE.md} color={colors.error} strokeWidth={ICON_STROKE} />
-            <Text style={styles.exceptionBannerText}>This order has an unresolved item exception.</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.exceptionBannerText}>
+                {unavailableCount} item{unavailableCount === 1 ? ' is' : 's are'} unavailable, so this order can't be packed.
+              </Text>
+              <Text style={styles.rejectionNotes}>
+                {isManager
+                  ? 'Reopen an item if you found it, or cancel the order.'
+                  : 'Ask a store manager to reopen the item if it was found, or to cancel the order.'}
+              </Text>
+            </View>
             {isManager && (
-              <Pressable onPress={handleResolveException} style={styles.resolveBtn}>
-                <Text style={styles.resolveBtnText}>Resolve</Text>
+              <Pressable onPress={handleCancelForUnavailable} style={styles.resolveBtn} disabled={busy} accessibilityLabel="Cancel this order">
+                <Text style={styles.resolveBtnText}>Cancel order</Text>
               </Pressable>
             )}
           </View>
@@ -322,6 +359,7 @@ export default function StoreOrderDetailScreen() {
               {order.landmark ? ` (near ${order.landmark})` : ''}, {order.city}
             </Text>
           </View>
+          {!!order.deliveryInstructions && <Text style={styles.addressText}>Instructions: {order.deliveryInstructions}</Text>}
         </View>
 
         <View style={styles.card}>
@@ -340,7 +378,7 @@ export default function StoreOrderDetailScreen() {
             <View key={category} style={{ marginTop: spacing.sm }}>
               <Text style={styles.categoryLabel}>{category.toUpperCase()}</Text>
               {items.map((item) => (
-                <ItemRow key={item.id} item={item} canPick={order.status === 'picking'} onPick={handlePickItem} />
+                <ItemRow key={item.id} item={item} canPick={order.status === 'picking'} onPick={handlePickItem} onReopen={isManager && order.status === 'picking' ? handleReopenItem : undefined} />
               ))}
             </View>
           ))}
@@ -355,98 +393,39 @@ export default function StoreOrderDetailScreen() {
             {delivery ? (
               <>
                 <Text style={styles.customerName}>{delivery.riderName}</Text>
-                <Text style={styles.stageText}>{DELIVERY_STAGE_LABEL[delivery.status] ?? delivery.status}</Text>
+                <Text style={styles.stageText}>
+                  {delivery.status === 'assigned' ? `Waiting for ${delivery.riderName} to accept` : DELIVERY_STAGE_LABEL[delivery.status] ?? delivery.status}
+                </Text>
+                {requestSecondsLeft !== null && (
+                  <View style={styles.requestTimerRow}>
+                    <Clock size={12} color={colors.textSecondary} strokeWidth={ICON_STROKE} />
+                    <Text style={styles.requestTimerText}>
+                      {Math.floor(requestSecondsLeft / 60)}:{String(requestSecondsLeft % 60).padStart(2, '0')} left to accept
+                    </Text>
+                  </View>
+                )}
                 {['accepted', 'at_store', 'picked_up', 'in_transit'].includes(delivery.status) && (
                   <Pressable style={styles.trackLiveBtn} onPress={() => router.push(`/track/${order.id}`)}>
                     <Text style={styles.trackLiveBtnText}>Track Live Location</Text>
                   </Pressable>
                 )}
-                {canAssignRiders && !['picked_up', 'in_transit'].includes(delivery.status) && (
-                  <Pressable style={styles.cancelAssignBtn} onPress={handleCancelAssignment} disabled={busy}>
+                {canAssignRiders && canCancelAssignment(delivery.status) && (
+                  <Pressable style={styles.cancelAssignBtn} onPress={() => setCancelOpen(true)} disabled={busy}>
                     <Text style={styles.cancelAssignBtnText}>Cancel Assignment</Text>
                   </Pressable>
                 )}
               </>
-            ) : dispatchRound?.status === 'open' && dispatchRound.mode === 'auto' ? (
-              <View style={styles.dispatchSearchingWrap}>
-                <View style={styles.dispatchSearchingRow}>
-                  <Radar size={ICON_SIZE.sm} color={colors.primary} strokeWidth={ICON_STROKE} />
-                  <Text style={styles.stageText}>Finding the best available rider…</Text>
-                </View>
-                {dispatchSecondsLeft !== null && (
-                  <View style={styles.dispatchTimerRow}>
-                    <Clock size={12} color={colors.textSecondary} strokeWidth={ICON_STROKE} />
-                    <Text style={styles.dispatchTimerText}>
-                      {Math.floor(dispatchSecondsLeft / 60)}:{String(dispatchSecondsLeft % 60).padStart(2, '0')} remaining
-                    </Text>
-                  </View>
-                )}
-                {canAssignRiders && (
-                  <Pressable style={styles.cancelAssignBtn} onPress={handleStopAutoAssign} disabled={busy}>
-                    <Text style={styles.cancelAssignBtnText}>Stop Auto-Assignment</Text>
-                  </Pressable>
-                )}
-              </View>
-            ) : dispatchRound?.status === 'open' ? (
-              <View style={styles.dispatchSearchingWrap}>
-                <View style={styles.dispatchSearchingRow}>
-                  <Radar size={ICON_SIZE.sm} color={colors.primary} strokeWidth={ICON_STROKE} />
-                  <Text style={styles.stageText}>
-                    Searching… {dispatchRound.offers.filter((o) => o.status === 'open').length} rider{dispatchRound.offers.filter((o) => o.status === 'open').length === 1 ? '' : 's'} notified
-                  </Text>
-                </View>
-                {dispatchSecondsLeft !== null && (
-                  <View style={styles.dispatchTimerRow}>
-                    <Clock size={12} color={colors.textSecondary} strokeWidth={ICON_STROKE} />
-                    <Text style={styles.dispatchTimerText}>
-                      {Math.floor(dispatchSecondsLeft / 60)}:{String(dispatchSecondsLeft % 60).padStart(2, '0')} remaining
-                    </Text>
-                  </View>
-                )}
-              </View>
-            ) : dispatchRound?.status === 'expired' && dispatchRound.mode === 'auto' ? (
-              <View>
-                <View style={styles.dispatchExpiredRow}>
-                  <AlertTriangle size={ICON_SIZE.sm} color={colors.error} strokeWidth={ICON_STROKE} />
-                  <Text style={styles.dispatchExpiredText}>No eligible rider was available for this delivery.</Text>
-                </View>
-                {canAssignRiders && (
-                  <View style={{ gap: spacing.sm }}>
-                    <Pressable style={styles.assignBtn} onPress={handleAutoAssign} disabled={busy}>
-                      <Text style={styles.assignBtnText}>Try Again</Text>
-                    </Pressable>
-                    <Pressable style={styles.assignManuallyBtn} onPress={openRiderSheet} disabled={busy}>
-                      <Text style={styles.assignManuallyBtnText}>Assign Manually</Text>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            ) : dispatchRound?.status === 'expired' ? (
-              <View>
-                <View style={styles.dispatchExpiredRow}>
-                  <AlertTriangle size={ICON_SIZE.sm} color={colors.error} strokeWidth={ICON_STROKE} />
-                  <Text style={styles.dispatchExpiredText}>No rider accepted within the dispatch window.</Text>
-                </View>
-                {canAssignRiders && (
-                  <Pressable style={styles.assignBtn} onPress={handleSendRider} disabled={busy}>
-                    <Text style={styles.assignBtnText}>Reassign Rider</Text>
-                  </Pressable>
-                )}
-              </View>
             ) : canAssignRiders ? (
               <View style={{ gap: spacing.sm }}>
-                <Pressable style={styles.assignBtn} onPress={handleAutoAssign} disabled={busy}>
-                  <Text style={styles.assignBtnText}>Auto-Assign Rider</Text>
-                </Pressable>
-                <Pressable style={styles.assignManuallyBtn} onPress={handleSendRider} disabled={busy}>
-                  <Text style={styles.assignManuallyBtnText}>Send to All Nearby Riders</Text>
-                </Pressable>
-                <Pressable style={styles.assignManuallyBtn} onPress={openRiderSheet} disabled={busy}>
-                  <Text style={styles.assignManuallyBtnText}>Assign Manually</Text>
-                </Pressable>
+                {notAccepted && <RiderDidNotAcceptNotice attempt={notAccepted} onChooseAnother={openRiderSheet} disabled={busy} />}
+                {!notAccepted && (
+                  <Pressable style={styles.assignBtn} onPress={openRiderSheet} disabled={busy}>
+                    <Text style={styles.assignBtnText}>Assign Rider</Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
-              <Text style={styles.stageText}>Waiting for store staff to send a rider</Text>
+              <Text style={styles.stageText}>Waiting for store staff to choose a rider</Text>
             )}
           </View>
         )}
@@ -515,9 +494,9 @@ export default function StoreOrderDetailScreen() {
         )}
         {ACTION_LABEL[order.status] && (
           <Pressable
-            style={[styles.acceptBtn, { flex: 1 }, (busy || (order.status === 'picking' && (pendingCount > 0 || order.hasException))) && styles.disabledBtn]}
+            style={[styles.acceptBtn, { flex: 1 }, (busy || packingBlocked) && styles.disabledBtn]}
             onPress={handleAdvance}
-            disabled={busy || (order.status === 'picking' && (pendingCount > 0 || order.hasException))}
+            disabled={busy || packingBlocked}
           >
             {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.acceptBtnText}>{ACTION_LABEL[order.status]}</Text>}
           </Pressable>
@@ -539,21 +518,26 @@ export default function StoreOrderDetailScreen() {
         ))}
       </AppBottomSheet>
 
-      <AppBottomSheet ref={riderSheetRef} title="Assign Rider" snapPoints={['60%']}>
-        <Text style={styles.sheetHint}>Pick a specific rider yourself, or use Auto-Assign from the previous screen to let the system choose.</Text>
-        {eligibleRiders.length === 0 ? (
-          <Text style={styles.sheetHint}>No eligible riders available right now.</Text>
-        ) : (
-          eligibleRiders.map((r) => (
-            <Pressable key={r.riderId} style={styles.riderRow} onPress={() => handleAssignRider(r.riderId)}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.riderName}>{r.name}{r.sameStore ? ' • Same Store' : ''}</Text>
-                <Text style={styles.riderMeta}>{r.vehicleType}{r.vehicleNumber ? ` • ${r.vehicleNumber}` : ''} • {r.activeDeliveries}/{r.capacity} active</Text>
-              </View>
-            </Pressable>
-          ))
-        )}
+      <AppBottomSheet ref={riderSheetRef} title="Choose a Rider" snapPoints={['75%']}>
+        <View style={styles.sheetHintRow}>
+          <Text style={[styles.sheetHint, { flex: 1, marginBottom: 0 }]}>Tap a free rider to send them this order. They have 5 minutes to accept.</Text>
+          <Pressable onPress={loadRiders} hitSlop={8} disabled={ridersLoading}>
+            <Text style={styles.refreshLink}>Refresh</Text>
+          </Pressable>
+        </View>
+        <RiderPickerList riders={riders} loading={ridersLoading} error={ridersError} onRetry={loadRiders} busyRiderId={busyRiderId} onPick={handleAssignRider} />
       </AppBottomSheet>
+
+      {delivery && (
+        <CancelAssignmentDialog
+          visible={cancelOpen}
+          riderName={delivery.riderName}
+          orderNumber={order.orderNumber}
+          deliveryStatus={delivery.status}
+          onConfirm={handleConfirmCancel}
+          onClose={() => setCancelOpen(false)}
+        />
+      )}
 
       <AppBottomSheet ref={packingSheetRef} title="Confirm Packing" snapPoints={['50%']} onDismiss={() => setPackingChecks({ items: false, quantity: false, packaging: false })}>
         <Text style={styles.sheetHint}>Confirm before this order becomes Ready for Pickup.</Text>
@@ -585,7 +569,7 @@ function PackingCheckRow({ label, checked, onToggle }: { label: string; checked:
   );
 }
 
-function ItemRow({ item, canPick, onPick }: { item: StoreOrderItem; canPick: boolean; onPick: (item: StoreOrderItem, status: 'picked' | 'unavailable') => void }) {
+function ItemRow({ item, canPick, onPick, onReopen }: { item: StoreOrderItem; canPick: boolean; onPick: (item: StoreOrderItem, status: 'picked' | 'unavailable') => void; onReopen?: (item: StoreOrderItem) => void }) {
   const picked = item.pickingStatus === 'picked';
   const unavailable = item.pickingStatus === 'unavailable';
   return (
@@ -612,6 +596,11 @@ function ItemRow({ item, canPick, onPick }: { item: StoreOrderItem; canPick: boo
       {canPick && !picked && !unavailable && (
         <Pressable style={styles.unavailableBtn} onPress={() => onPick(item, 'unavailable')} hitSlop={6}>
           <Text style={styles.unavailableBtnText}>N/A</Text>
+        </Pressable>
+      )}
+      {unavailable && onReopen && (
+        <Pressable style={styles.unavailableBtn} onPress={() => onReopen(item)} hitSlop={6} accessibilityLabel={`Item found: reopen ${item.productName}`}>
+          <Text style={styles.unavailableBtnText}>Found it</Text>
         </Pressable>
       )}
     </View>
@@ -692,25 +681,16 @@ const styles = StyleSheet.create({
   stageText: { ...textStyles.bodySmall, color: colors.primary, fontFamily: 'PlusJakartaSans_600SemiBold', marginTop: spacing.xs },
   assignBtn: { backgroundColor: colors.primary, borderRadius: radius.sm, height: 44, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
   assignBtnText: { ...textStyles.button, color: colors.white, fontSize: 13 },
-  assignManuallyBtn: { borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.sm, height: 44, alignItems: 'center', justifyContent: 'center' },
-  assignManuallyBtnText: { ...textStyles.button, color: colors.textSecondary, fontSize: 13 },
-  dispatchSearchingWrap: { backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.xs, gap: 6 },
-  dispatchSearchingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  dispatchTimerRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: ICON_SIZE.sm + spacing.sm },
-  dispatchTimerText: { ...textStyles.caption, color: colors.textSecondary },
-  dispatchExpiredRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.errorTint, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.xs, marginBottom: spacing.sm },
-  dispatchExpiredText: { ...textStyles.bodySmall, color: colors.error, flex: 1 },
+  requestTimerRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  requestTimerText: { ...textStyles.caption, color: colors.textSecondary },
+  sheetHintRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.md },
+  refreshLink: { ...textStyles.caption, color: colors.primary, fontFamily: 'PlusJakartaSans_700Bold' },
   trackLiveBtn: { marginTop: spacing.sm, alignSelf: 'flex-start' },
   trackLiveBtnText: { ...textStyles.caption, color: colors.primary, fontFamily: 'PlusJakartaSans_700Bold' },
   inlineRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   proofPhoto: { width: '100%', height: 160, borderRadius: radius.sm, backgroundColor: colors.surfaceSunken, marginTop: spacing.sm },
-  cancelAssignBtn: { marginTop: spacing.sm, alignSelf: 'flex-start' },
+  cancelAssignBtn: { marginTop: spacing.md, alignSelf: 'flex-start', borderWidth: 1.5, borderColor: colors.error, borderRadius: radius.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   cancelAssignBtnText: { ...textStyles.caption, color: colors.error, fontFamily: 'PlusJakartaSans_700Bold' },
-  autoAssignRow: { backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.md, alignItems: 'center' },
-  autoAssignText: { ...textStyles.bodySmall, color: colors.primaryDarker, fontFamily: 'PlusJakartaSans_700Bold' },
-  riderRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider },
-  riderName: { ...textStyles.bodySmall, color: colors.textPrimary, fontFamily: 'PlusJakartaSans_600SemiBold' },
-  riderMeta: { ...textStyles.caption, color: colors.textSecondary, marginTop: 2 },
   packingCheckRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
   packingCheckLabel: { ...textStyles.body, color: colors.textPrimary },
   packingCheckLabelDone: { color: colors.textMuted },

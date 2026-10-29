@@ -63,8 +63,9 @@ export interface Category {
   slug: string;
   name: string;
   description?: string;
-  heroImage: string;
-  thumbnail: string;
+  /** null when the category has no image — render the neutral fallback tile, never a stock photo. */
+  heroImage: string | null;
+  thumbnail: string | null;
   itemCount: number;
   parentId?: ID;
 }
@@ -127,6 +128,18 @@ export interface Address {
   isDefault: boolean;
   receiverName: string;
   receiverPhone: string;
+  /** Structured parts (added with the Google address picker). Older addresses only have line1/line2. */
+  houseNo?: string;
+  building?: string;
+  floor?: string;
+  street?: string;
+  locality?: string;
+  landmark?: string;
+  /** The provider's one-line address for the confirmed pin. Display only: delivery uses lat/lng. */
+  formattedAddress?: string;
+  placeId?: string;
+  deliveryInstructions?: string;
+  geocodeSource?: 'google' | 'osm' | 'device' | 'manual';
 }
 
 // ---------- Cart / wishlist ----------
@@ -200,6 +213,8 @@ export interface OrderItem {
   name: string;
   variantLabel: string;
   image: string;
+  /** The product's current photo — shown when `image` (the frozen order-time snapshot) is empty or no longer loads. */
+  fallbackImage?: string;
   quantity: number;
   price: number;
   mrp: number;

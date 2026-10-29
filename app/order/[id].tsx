@@ -180,7 +180,7 @@ export default function OrderDetailScreen() {
           </View>
           {order.items.map((item) => (
             <View key={item.id} style={styles.itemRow}>
-              <AppImage uri={item.image} style={styles.itemImage} contentFit="cover" kind="product" />
+              <AppImage uri={item.image} fallbackUri={item.fallbackImage} style={styles.itemImage} contentFit="cover" kind="product" />
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{item.name}</Text>
                 <Text style={styles.itemMeta}>

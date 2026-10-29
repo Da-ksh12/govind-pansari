@@ -1,7 +1,7 @@
 import React from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
-import { Grid2x2 } from 'lucide-react-native';
+import { Grid2x2, LayoutGrid } from 'lucide-react-native';
+import { AppImage } from '../ui/AppImage';
 import { router } from 'expo-router';
 import { colors, radius, spacing, textStyles } from '../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../theme/icons';
@@ -27,7 +27,7 @@ export function CategoryRail({ categories }: CategoryRailProps) {
         item ? (
           <Pressable style={styles.item} onPress={() => router.push(`/category/${item.slug}`)}>
             <View style={styles.circle}>
-              <Image source={{ uri: item.thumbnail }} style={styles.image} contentFit="cover" />
+              <AppImage uri={item.thumbnail} style={styles.image} contentFit="cover" borderRadius={0} fallbackIcon={LayoutGrid} />
             </View>
             <Text numberOfLines={1} style={styles.label}>
               {item.name}

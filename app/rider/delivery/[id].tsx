@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
-import type { ImagePickerAsset } from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -16,7 +15,11 @@ import { riderOpsRepository, type CurrentAssignment, type DeliveryFailureReason,
 import { riderLocationService } from '../../../services/location/riderLocationService';
 import { trackingRepository } from '../../../services/repositories/trackingRepository';
 import { useRefetchOnForeground } from '../../../hooks/useRefetchOnForeground';
-import { captureDeliveryProofPhoto, uploadDeliveryProofPhoto, DeliveryProofError } from '../../../services/storage/deliveryProof';
+import { useRiderLocationStatus } from '../../../hooks/useRiderLocationStatus';
+import { useKeyboardOverlap } from '../../../hooks/useKeyboardOverlap';
+import { actionBarBottomPadding } from '../../../services/keyboardOverlap';
+import { LocationSharingNotice } from '../../../components/rider/LocationSharingNotice';
+import { captureDeliveryProofPhoto, recoverInterruptedProofPhoto, uploadDeliveryProofPhoto, DeliveryProofError, type ProofPhoto } from '../../../services/storage/deliveryProof';
 
 // section 7: continuous tracking only while genuinely on this leg —
 // never while just assigned-and-unaccepted, never once terminal.
@@ -36,13 +39,19 @@ const FAILURE_REASONS: { key: DeliveryFailureReason; label: string }[] = [
 
 export default function RiderDeliveryScreen() {
   const insets = useSafeAreaInsets();
+  // The pickup form has a text box low on the screen; edge-to-edge Android does not lift it above the keyboard by itself.
+  const keyboard = useKeyboardOverlap();
+  const scrollRef = useRef<ScrollView>(null);
+  const confirmCardY = useRef(0);
+  const [orderInputFocused, setOrderInputFocused] = useState(false);
   const { id } = useLocalSearchParams<{ id: string }>();
   const [delivery, setDelivery] = useState<CurrentAssignment | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [orderNumberInput, setOrderNumberInput] = useState('');
   const [locationTracking, setLocationTracking] = useState(false);
-  const [proofPhoto, setProofPhoto] = useState<ImagePickerAsset | null>(null);
+  const { status: locationStatus, now: locationNow } = useRiderLocationStatus();
+  const [proofPhoto, setProofPhoto] = useState<ProofPhoto | null>(null);
   const [completedProof, setCompletedProof] = useState<DeliveryProof | null>(null);
 
   const [error, setError] = useState(false);
@@ -73,7 +82,31 @@ export default function RiderDeliveryScreen() {
     setProofPhoto(null);
   }, [id]);
 
+  // Android can kill the app while the camera is open; the app then restarts and comes back to this screen (app/rider/index.tsx).
+  // Ask the picker for the photo it could not deliver, so the rider carries on instead of starting the photo again.
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    recoverInterruptedProofPhoto(id)
+      .then((recovered) => {
+        if (!alive) return;
+        if (recovered.status === 'recovered') setProofPhoto(recovered.photo);
+        else if (recovered.status === 'lost') Alert.alert('Camera', "The camera closed before your photo came back. Please take the delivery photo again.");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
   useFocusEffect(load);
+
+  // With the keyboard up, bring the order-number card to the top of what is left of the screen, so the rider sees what they type.
+  useEffect(() => {
+    if (!orderInputFocused || keyboard.overlap <= 0) return;
+    const timer = setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, confirmCardY.current - spacing.md), animated: true }), 60);
+    return () => clearTimeout(timer);
+  }, [orderInputFocused, keyboard.overlap]);
 
   // Section 1 (final QA hardening): the rider couldn't see their own
   // past delivery's proof photo at all — history rows weren't even
@@ -150,11 +183,15 @@ export default function RiderDeliveryScreen() {
   const handleStartDelivery = () => runAction(() => riderOpsRepository.startDelivery(delivery!.assignmentId));
   const handleMarkApproaching = () => runAction(() => riderOpsRepository.markApproaching(delivery!.orderId));
   const handleCaptureProof = async () => {
+    if (!id) return;
     try {
-      const asset = await captureDeliveryProofPhoto();
-      if (asset) setProofPhoto(asset);
+      // `busy` covers the moment between the camera handing the photo back and the shrunk copy being ready.
+      const photo = await captureDeliveryProofPhoto(id, () => setBusy(true));
+      if (photo) setProofPhoto(photo);
     } catch (e) {
       Alert.alert('Camera', e instanceof DeliveryProofError ? e.message : 'Could not open the camera. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
   const handleConfirmDelivered = () => {
@@ -199,7 +236,7 @@ export default function RiderDeliveryScreen() {
 
   return (
     <SafeScreen>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View ref={keyboard.ref} onLayout={keyboard.onLayout} collapsable={false} style={{ flex: 1, paddingBottom: keyboard.overlap }}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.headerBtn} hitSlop={8}>
           <ArrowLeft size={ICON_SIZE.md} color={colors.textPrimary} strokeWidth={ICON_STROKE} />
@@ -216,7 +253,21 @@ export default function RiderDeliveryScreen() {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {TRACKABLE_STATUSES.has(delivery.status) && (
+          <LocationSharingNotice
+            sharing={locationTracking && locationStatus.tracking}
+            lastSentAt={locationStatus.lastSentAt}
+            accuracy={locationStatus.lastAccuracy}
+            rejected={locationStatus.lastRejected}
+            now={locationNow}
+            onRetry={() =>
+              riderLocationService
+                .start((message) => Alert.alert('Location', message))
+                .then(() => setLocationTracking(riderLocationService.isTracking()))
+            }
+          />
+        )}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <Package size={ICON_SIZE.sm} color={colors.primary} strokeWidth={ICON_STROKE} />
@@ -233,7 +284,11 @@ export default function RiderDeliveryScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Deliver To</Text>
           <Text style={styles.primaryText}>{delivery.recipientName}</Text>
-          <Text style={styles.secondaryText}>{delivery.deliveryAddressLine1}{delivery.deliveryCity ? `, ${delivery.deliveryCity}` : ''}</Text>
+          <Text style={styles.secondaryText}>
+            {[delivery.deliveryAddressLine1, delivery.deliveryAddressLine2, delivery.deliveryCity].filter(Boolean).join(', ')}
+          </Text>
+          {!!delivery.deliveryLandmark && <Text style={styles.secondaryText}>Landmark: {delivery.deliveryLandmark}</Text>}
+          {!!delivery.deliveryInstructions && <Text style={[styles.secondaryText, { fontFamily: 'PlusJakartaSans_600SemiBold' }]}>Instructions: {delivery.deliveryInstructions}</Text>}
           <View style={styles.actionRow}>
             <Pressable style={styles.navBtn} onPress={() => call(delivery.recipientPhone)}>
               <Phone size={14} color={colors.primary} strokeWidth={ICON_STROKE} />
@@ -280,7 +335,7 @@ export default function RiderDeliveryScreen() {
         )}
 
         {delivery.status === 'at_store' && (
-          <View style={styles.card}>
+          <View style={styles.card} onLayout={(e) => { confirmCardY.current = e.nativeEvent.layout.y; }}>
             <Text style={styles.cardTitle}>Confirm Pickup</Text>
             <Text style={styles.secondaryText}>Enter the order number to confirm you have the right package.</Text>
             <TextInput
@@ -288,8 +343,15 @@ export default function RiderDeliveryScreen() {
               placeholder={`e.g. ${delivery.orderNumber}`}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="characters"
+              autoCorrect={false}
+              returnKeyType="done"
               value={orderNumberInput}
               onChangeText={setOrderNumberInput}
+              onFocus={() => setOrderInputFocused(true)}
+              onBlur={() => setOrderInputFocused(false)}
+              onSubmitEditing={() => {
+                if (orderNumberInput.trim() && !busy) handleConfirmPickup();
+              }}
             />
           </View>
         )}
@@ -338,7 +400,7 @@ export default function RiderDeliveryScreen() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      <View style={[styles.actionBar, { paddingBottom: Math.max(insets.bottom, spacing.base) }]}>
+      <View style={[styles.actionBar, { paddingBottom: actionBarBottomPadding(keyboard.overlap, insets.bottom, spacing.base) }]}>
         {delivery.status === 'assigned' && (
           <>
             <Pressable style={styles.declineBtn} onPress={handleDecline} disabled={busy}>
@@ -384,7 +446,7 @@ export default function RiderDeliveryScreen() {
           <Text style={styles.doneText}>This delivery is closed.</Text>
         )}
       </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeScreen>
   );
 }

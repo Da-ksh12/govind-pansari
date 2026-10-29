@@ -7,6 +7,7 @@ import { colors, radius, shadows, spacing, textStyles } from '../../../theme';
 import { spring as springPresets, duration as motionDurations } from '../../../theme/motion';
 import { ICON_SIZE, ICON_STROKE } from '../../../theme/icons';
 import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { shouldStackModalButtons } from './modalLayout';
 
 /**
  * The one Govind Pansari modal system (cart/checkout/order hardening
@@ -86,6 +87,11 @@ export function GPModal({
   }, [visible, scale]);
 
   const cardStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  // Two half-width buttons leave ~140px of text room each inside the 360px
+  // card, so a label such as "Change Payment Method" wrapped onto two lines.
+  // When either label is long the buttons stack full-width instead (primary
+  // on top), so every label stays on one line at any supported width.
+  const stackButtons = shouldStackModalButtons(primaryLabel, secondaryLabel);
   const Icon = icon ?? TONE_ICON[tone];
   const toneColor = TONE_COLOR[tone];
 
@@ -107,19 +113,19 @@ export function GPModal({
           {children}
 
           {(primaryLabel || secondaryLabel) && (
-            <View style={styles.buttonRow}>
+            <View style={[styles.buttonRow, stackButtons && styles.buttonColumn]}>
               {secondaryLabel && (
-                <Pressable style={styles.secondaryBtn} onPress={onPressSecondary ?? onClose}>
-                  <Text style={styles.secondaryBtnText}>{secondaryLabel}</Text>
+                <Pressable style={[styles.secondaryBtn, stackButtons && styles.stackedBtn]} onPress={onPressSecondary ?? onClose}>
+                  <Text style={styles.secondaryBtnText} numberOfLines={1}>{secondaryLabel}</Text>
                 </Pressable>
               )}
               {primaryLabel && (
                 <Pressable
-                  style={[styles.primaryBtn, primaryDestructive && styles.primaryBtnDestructive, primaryDisabled && styles.primaryBtnDisabled]}
+                  style={[styles.primaryBtn, stackButtons && styles.stackedBtn, primaryDestructive && styles.primaryBtnDestructive, primaryDisabled && styles.primaryBtnDisabled]}
                   onPress={onPressPrimary}
                   disabled={primaryDisabled}
                 >
-                  <Text style={styles.primaryBtnText}>{primaryLabel}</Text>
+                  <Text style={styles.primaryBtnText} numberOfLines={1}>{primaryLabel}</Text>
                 </Pressable>
               )}
             </View>
@@ -161,9 +167,12 @@ const styles = StyleSheet.create({
   },
   iconCircle: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
   image: { width: 88, height: 88, borderRadius: radius.lg, marginBottom: spacing.md, backgroundColor: colors.surfaceSunken },
-  title: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: colors.textPrimary, textAlign: 'center' },
+  title: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, lineHeight: 25, color: colors.textPrimary, textAlign: 'center' },
   message: { ...textStyles.bodySmall, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.xs },
   buttonRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl, width: '100%' },
+  // column-reverse: the secondary button is rendered first, so this puts the primary action on top.
+  buttonColumn: { flexDirection: 'column-reverse' },
+  stackedBtn: { flex: 0, flexGrow: 0, alignSelf: 'stretch' },
   secondaryBtn: { flex: 1, height: 48, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   secondaryBtnText: { ...textStyles.button, color: colors.textPrimary, fontSize: 14 },
   primaryBtn: { flex: 1, height: 48, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },

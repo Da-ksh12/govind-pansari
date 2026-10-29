@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- SMS User Consent needs no permission: Google Play services shows its own one-tap "allow this app to read this message?" screen. -->
+</manifest>

@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image, type ImageContentFit } from 'expo-image';
 import { ImageOff, type LucideIcon } from 'lucide-react-native';
 import { colors, radius } from '../../theme';
 import { Skeleton } from './Skeleton';
+import { imageSources } from '../../services/imageSources';
 
 interface AppImageProps {
   uri?: string | null;
+  /**
+   * Tried when `uri` is missing or fails to load — e.g. an order line whose
+   * frozen image snapshot points at a file that has since been deleted, but
+   * whose product has a current photo. Only after every source fails does the
+   * branded fallback tile appear.
+   */
+  fallbackUri?: string | null;
   style: StyleProp<ViewStyle>;
   contentFit?: ImageContentFit;
   borderRadius?: number;
@@ -34,14 +42,23 @@ interface AppImageProps {
  * fetch failed" always resolve to the same on-brand tile rather than
  * a broken-image icon in one place and a blank beige box in another.
  */
-export function AppImage({ uri, style, contentFit = 'cover', borderRadius = radius.sm, kind = 'generic', fallbackIcon: FallbackIcon = ImageOff, fallbackIconSize }: AppImageProps) {
-  const [failed, setFailed] = useState(false);
+export function AppImage({ uri, fallbackUri, style, contentFit = 'cover', borderRadius = radius.sm, kind = 'generic', fallbackIcon: FallbackIcon = ImageOff, fallbackIconSize }: AppImageProps) {
+  const sources = useMemo(() => imageSources(uri, fallbackUri), [uri, fallbackUri]);
+  // Index of the source being shown; sources.length means every one failed.
+  const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  // A recycled list cell (or a re-fetched product) hands this component a new
+  // image: start over instead of staying stuck on the previous cell's failure.
+  useEffect(() => {
+    setAttempt(0);
+    setLoaded(false);
+  }, [sources]);
   const flat = StyleSheet.flatten(style) ?? {};
   const boxWidth = typeof flat.width === 'number' ? flat.width : 48;
   const iconSize = fallbackIconSize ?? Math.max(14, Math.min(28, boxWidth * 0.32));
+  const current = sources[attempt];
 
-  if (!uri || failed) {
+  if (!current) {
     if (kind === 'product') {
       return (
         <View style={[styles.productFallback, style, { borderRadius }]}>
@@ -60,13 +77,14 @@ export function AppImage({ uri, style, contentFit = 'cover', borderRadius = radi
     <View style={[style, { borderRadius, overflow: 'hidden' }]}>
       {!loaded && <Skeleton width="100%" height={typeof flat.height === 'number' ? flat.height : 48} borderRadius={0} style={styles.skeletonAbsolute} />}
       <Image
-        source={{ uri }}
+        key={current}
+        source={{ uri: current }}
         style={StyleSheet.absoluteFill}
         contentFit={contentFit}
         transition={150}
         cachePolicy="disk"
         onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
+        onError={() => setAttempt((n) => n + 1)}
       />
     </View>
   );

@@ -5,7 +5,7 @@ import { router, usePathname } from 'expo-router';
 import {
   LayoutDashboard, ShoppingBag, Package, FolderTree, Boxes, Store as StoreIcon,
   Bike, Truck, Users, UserCog, ScrollText, Settings as SettingsIcon, LogOut, Bell,
-  PanelLeftClose, PanelLeftOpen, BarChart3, MoreHorizontal, X, FlaskConical,
+  PanelLeftClose, PanelLeftOpen, BarChart3, MoreHorizontal, X, FlaskConical, ArrowLeft, Megaphone, IndianRupee,
 } from 'lucide-react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
 import { duration } from '../../theme/motion';
@@ -16,6 +16,7 @@ import { useNotificationsStore } from '../../store/notificationsStore';
 import { CommandSearch } from './CommandSearch';
 import { Monogram } from '../brand/Wordmark';
 import { adminRepository, type AdminPermission } from '../../services/repositories/adminRepository';
+import { handleAdminBack } from '../../services/adminBackGuard';
 
 const WIDE_BREAKPOINT = 900;
 const SIDEBAR_WIDE = 240;
@@ -41,6 +42,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Inventory', href: '/admin/inventory', icon: Boxes, permission: 'inventory.view', section: 'Catalogue' },
   { label: 'Customers', href: '/admin/customers', icon: Users, permission: 'customers.view', section: 'Business' },
   { label: 'Analytics', href: '/admin/analytics', icon: BarChart3, permission: 'analytics.view', section: 'Business' },
+  { label: 'Delivery & Pricing', href: '/admin/pricing', icon: IndianRupee, permission: 'zones.manage', section: 'Business' },
+  { label: 'Banners & Offers', href: '/admin/promotions', icon: Megaphone, permission: 'promotions.manage', section: 'Business' },
   { label: 'Staff & Roles', href: '/admin/staff', icon: UserCog, permission: 'users.view', section: 'Administration' },
   { label: 'Notifications', href: '/admin/notifications', icon: Bell, permission: 'notifications.view', section: 'Administration' },
   { label: 'Audit Logs', href: '/admin/audit-logs', icon: ScrollText, permission: 'audit_logs.view', section: 'Administration' },
@@ -145,6 +148,13 @@ export function AdminShell({ title, subtitle, children }: AdminShellProps) {
     router.push(href as never);
   };
 
+  /** The header Back: the focused screen's own guard first (Add Product), otherwise the previous screen, otherwise the dashboard. */
+  const goBack = () => {
+    if (handleAdminBack()) return;
+    if (router.canGoBack()) router.back();
+    else router.replace('/admin' as never);
+  };
+
   return (
     <View style={styles.root}>
       {isWide && (
@@ -193,9 +203,17 @@ export function AdminShell({ title, subtitle, children }: AdminShellProps) {
 
       <View style={styles.main}>
         <View style={[styles.topBar, !isWide && { paddingTop: insets.top + spacing.sm }]}>
-          <View style={{ flex: isWide ? 0 : 1 }}>
-            <Text style={styles.pageTitle}>{title}</Text>
-            {subtitle && isWide && <Text style={styles.pageSubtitle}>{subtitle}</Text>}
+          <View style={[styles.titleRow, { flex: isWide ? 0 : 1 }]}>
+            {/* Every page except the dashboard can go back. A screen with unsaved work (Add Product) answers Back itself. */}
+            {pathname !== '/admin' && pathname !== '/admin/' && (
+              <Pressable onPress={goBack} style={styles.backBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Go back">
+                <ArrowLeft size={ICON_SIZE.md} color={colors.textPrimary} strokeWidth={ICON_STROKE} />
+              </Pressable>
+            )}
+            <View style={{ flexShrink: 1 }}>
+              <Text style={styles.pageTitle} numberOfLines={1}>{title}</Text>
+              {subtitle && isWide && <Text style={styles.pageSubtitle}>{subtitle}</Text>}
+            </View>
           </View>
           {isWide && <CommandSearch />}
           <View style={styles.topBarActions}>
@@ -282,6 +300,8 @@ export function AdminShell({ title, subtitle, children }: AdminShellProps) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, flexDirection: 'row', backgroundColor: colors.background },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceSunken },
   qaBanner: { backgroundColor: colors.warning, paddingVertical: 6, alignItems: 'center', justifyContent: 'center' },
   qaBannerText: { ...textStyles.caption, color: colors.white, fontFamily: 'PlusJakartaSans_700Bold', letterSpacing: 0.4 },
   sidebar: { backgroundColor: colors.surface, borderRightWidth: 1, borderRightColor: colors.divider, overflow: 'hidden' },
@@ -301,7 +321,9 @@ const styles = StyleSheet.create({
   footerRole: { ...textStyles.caption, color: colors.textMuted, marginTop: 1, textTransform: 'capitalize' },
   logoutRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm },
   logoutText: { ...textStyles.caption, color: colors.error, fontFamily: 'PlusJakartaSans_600SemiBold' },
-  main: { flex: 1 },
+  // minHeight: 0 lets these flex children shrink below their content, so a list inside gets the REMAINING height and scrolls
+  // (without it a tall child can push the bottom tab bar off screen instead).
+  main: { flex: 1, minHeight: 0 },
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.lg,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.surface,
@@ -312,7 +334,7 @@ const styles = StyleSheet.create({
   topBarActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   bellBtn: { position: 'relative', padding: 2 },
   bellDot: { position: 'absolute', top: 0, right: 0, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.error, borderWidth: 1.5, borderColor: colors.surface },
-  content: { flex: 1, ...shadows.xs },
+  content: { flex: 1, minHeight: 0, ...shadows.xs },
   bottomTabBar: {
     flexDirection: 'row', backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.divider,
     paddingTop: spacing.sm, ...shadows.md,

@@ -15,7 +15,7 @@ const ACTIVE_STATUSES = new Set(['confirmed', 'preparing', 'packed', 'rider_assi
 /** Single image if there's one item; a 2x2 collage (Zepto/Blinkit-style "what's in this order" preview) once there are several. */
 function OrderThumbCollage({ items }: { items: Order['items'] }) {
   if (items.length <= 1) {
-    return <AppImage uri={items[0]?.image} style={styles.singleThumb} contentFit="cover" kind="product" />;
+    return <AppImage uri={items[0]?.image} fallbackUri={items[0]?.fallbackImage} style={styles.singleThumb} contentFit="cover" kind="product" />;
   }
   const cells = items.slice(0, 4);
   const extra = items.length - 4;
@@ -23,7 +23,7 @@ function OrderThumbCollage({ items }: { items: Order['items'] }) {
     <View style={styles.collage}>
       {cells.map((item, i) => (
         <View key={item.id} style={styles.collageCell}>
-          <AppImage uri={item.image} style={styles.collageImage} contentFit="cover" kind="product" borderRadius={0} />
+          <AppImage uri={item.image} fallbackUri={item.fallbackImage} style={styles.collageImage} contentFit="cover" kind="product" borderRadius={0} />
           {i === 3 && extra > 0 && (
             <View style={styles.collageMoreOverlay}>
               <Text style={styles.collageMoreText}>+{extra}</Text>

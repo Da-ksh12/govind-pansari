@@ -17,7 +17,7 @@ import {
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../theme/icons';
 import { AppImage } from '../../components/ui/AppImage';
-import { ProductBadgePill } from '../../components/ui/Badge';
+import { ProductBadgeStack } from '../../components/ui/Badge';
 import { Chip } from '../../components/ui/Badge';
 import { PriceBlock, formatINR } from '../../components/ui/PriceBlock';
 import { Rating } from '../../components/ui/Rating';
@@ -149,9 +149,9 @@ export default function ProductDetailScreen() {
             <View style={styles.wideGallery}>
               <View style={styles.wideMainImageWrap}>
                 <AppImage uri={galleryImages[activeImage] ?? galleryImages[0]} style={styles.wideMainImage} contentFit="cover" kind="product" borderRadius={0} />
-                {product.badges[0] && (
+                {product.badges.length > 0 && (
                   <View style={styles.badgeSlotWide}>
-                    <ProductBadgePill kind={product.badges[0]} />
+                    <ProductBadgeStack badges={product.badges} />
                   </View>
                 )}
               </View>
@@ -265,9 +265,9 @@ export default function ProductDetailScreen() {
             </View>
           </View>
 
-          {product.badges[0] && (
+          {product.badges.length > 0 && (
             <View style={styles.badgeSlot}>
-              <ProductBadgePill kind={product.badges[0]} />
+              <ProductBadgeStack badges={product.badges} />
             </View>
           )}
 

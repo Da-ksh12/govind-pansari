@@ -1,0 +1,8 @@
+{
+  "_readme": "Owner-managed additions to Agra's place data, merged IN FRONT of the generated data/agraPlaces.json (an entry here wins). Add a colony/sector the maps do not know under 'localities': {\"n\":\"Vijay Nagar Colony\",\"la\":27.2034,\"ln\":78.0226,\"r\":600,\"k\":\"colony\",\"s\":1}. Add a lane under 'streets': {\"n\":\"Gali No. 3, Sector 11\",\"p\":[[27.2041,77.9650],[27.2043,77.9655]]}. A landmark under 'landmarks': {\"n\":\"Durga Mandir\",\"la\":27.2045,\"ln\":77.9651,\"t\":\"temple\"}. See data/README.md.",
+  "localities": [],
+  "streets": [],
+  "landmarks": [],
+  "pincodes": [],
+  "postalAreas": []
+}

@@ -43,9 +43,9 @@ export default function AdminCategoriesScreen() {
     setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, is_active: next } : c)));
     try {
       await adminRepository.setCategoryActive(cat.id, next);
-    } catch {
+    } catch (e) {
       setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, is_active: !next } : c)));
-      showToast("Couldn't update the category.", 'error');
+      showToast(e instanceof Error ? e.message : "Couldn't update the category.", 'error');
     }
   };
 
@@ -86,6 +86,7 @@ export default function AdminCategoriesScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{item.name}</Text>
               {item.description ? <Text style={styles.description} numberOfLines={1}>{item.description}</Text> : null}
+              {!item.image_url ? <Text style={styles.noImage}>No image — add one so customers see a picture</Text> : null}
             </View>
             <StatusBadge status={item.is_active ? 'active' : 'inactive'} size="sm" />
             {canManage && (
@@ -148,6 +149,8 @@ function CategoryEditor({
 
   const save = async () => {
     if (!name.trim()) return showToast('Category name is required.', 'error');
+    // A category is a tile customers tap: it needs a picture of its own (without one the store borrows a product photo, or hides the category if it is empty).
+    if (!imageUrl) return showToast('Add a category image so customers see a picture, not a blank tile.', 'error');
     setSaving(true);
     const input: AdminCategoryInput = {
       name: name.trim(),
@@ -242,6 +245,7 @@ const styles = StyleSheet.create({
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
   name: { ...textStyles.bodySmall, color: colors.textPrimary },
   description: { ...textStyles.caption, color: colors.textSecondary, marginTop: 1 },
+  noImage: { ...textStyles.caption, color: colors.warning, fontFamily: 'PlusJakartaSans_600SemiBold', marginTop: 1 },
   editBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.surfaceSunken, alignItems: 'center', justifyContent: 'center' },
   modalOverlay: { flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   modalCard: { width: '100%', maxWidth: 460, maxHeight: '86%', backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, ...shadows.lg },

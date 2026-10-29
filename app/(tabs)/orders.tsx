@@ -142,7 +142,7 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { paddingHorizontal: spacing.base, paddingTop: spacing.md },
-  title: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary },
+  title: { ...textStyles.screenTitle, color: colors.textPrimary },
   tabRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   tab: {
     paddingHorizontal: spacing.base,

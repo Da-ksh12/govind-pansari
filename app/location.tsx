@@ -9,8 +9,10 @@ import { SafeScreen } from '../components/layout/SafeScreen';
 import { useLocationStore } from '../store/locationStore';
 import { addressRepository } from '../services/repositories/addressRepository';
 import { storeRepository, type ServiceabilityResult } from '../services/repositories/storeRepository';
-import { locationService, LocationError } from '../services/location/locationService';
-import { geocodingService } from '../services/location/geocodingService';
+import { locationService, describeLocationError } from '../services/location/locationService';
+import { addressSearch } from '../services/location/addressSearch';
+import { shortAddressLabel } from '../services/location/addressTypes';
+import { describeGpsAccuracy, describeLocationFailure, describeServiceability, describeServiceabilityFailure } from '../services/serviceability';
 import { BrandedLoader } from '../components/ui/BrandedLoader';
 import { LocationPinDrop } from '../components/location/LocationPinDrop';
 import { bannerImg } from '../data/images';
@@ -45,7 +47,8 @@ export default function LocationScreen() {
       const result = await storeRepository.checkServiceability(position);
       setResolved({ label, position, result });
     } catch {
-      setLocateError("Couldn't check delivery availability. Please try again.");
+      // The check failed — that is not an answer about the area, so it is never shown as "not delivering here".
+      setLocateError(describeServiceabilityFailure().message);
     } finally {
       setResolving(false);
     }
@@ -62,14 +65,18 @@ export default function LocationScreen() {
         state = await locationService.requestPermission();
       }
       if (state === 'denied' || state === 'denied_permanently') {
-        setLocateError('Location permission was denied. You can still choose a saved address or enter one manually.');
+        setLocateError(`${describeLocationFailure('PERMISSION_DENIED')} Or choose a saved address below.`);
         return;
       }
-      const position = await locationService.getCurrentPosition();
-      const geocoded = await geocodingService.reverseGeocode(position);
-      await resolveLocation(geocoded?.label ?? 'Current location', position);
+      const fix = await locationService.getCurrentFix();
+      const position = { lat: fix.lat, lng: fix.lng };
+      const { address } = await addressSearch.reverse(position);
+      await resolveLocation(shortAddressLabel(address?.parts) ?? 'Current location', position);
+      // A weak fix still gives an answer (below), with a warning that the pin may be off.
+      const accuracy = describeGpsAccuracy(fix.accuracyMeters, fix.precise);
+      if (accuracy.message) setLocateError(accuracy.message);
     } catch (e) {
-      setLocateError(e instanceof LocationError ? e.message : "We couldn't get your location.");
+      setLocateError(`${describeLocationError(e)} Or choose a saved address below.`);
     } finally {
       setLocating(false);
     }
@@ -86,6 +93,7 @@ export default function LocationScreen() {
 
   if (resolved) {
     const serviceable = resolved.result.serviceable;
+    const info = describeServiceability(resolved.result);
     return (
       <SafeScreen>
         <View style={styles.resultWrap}>
@@ -99,16 +107,17 @@ export default function LocationScreen() {
             ) : (
               <XCircle size={ICON_SIZE.xxl} color={colors.error} strokeWidth={ICON_STROKE} />
             )}
-            <Text style={styles.resultTitle}>
-              {serviceable ? 'Good news! We deliver to your area.' : "We're not delivering here yet."}
-            </Text>
+            <Text style={styles.resultTitle}>{info.title}</Text>
             <Text style={styles.resultAddress}>{resolved.label}</Text>
             {serviceable ? (
-              <View style={styles.etaChip}>
-                <Text style={styles.etaChipText}>Estimated delivery: {resolved.result.estimatedDeliveryMinutes} min</Text>
-              </View>
+              <>
+                <Text style={styles.resultSubtitle}>{info.message}</Text>
+                <View style={styles.etaChip}>
+                  <Text style={styles.etaChipText}>Estimated delivery: {resolved.result.estimatedDeliveryMinutes} min</Text>
+                </View>
+              </>
             ) : (
-              <Text style={styles.resultSubtitle}>We're expanding fast — check back soon.</Text>
+              <Text style={styles.resultSubtitle}>{info.message}</Text>
             )}
             <Pressable style={styles.cta} onPress={serviceable ? handleContinue : () => setResolved(null)}>
               <Text style={styles.ctaText}>{serviceable ? 'Continue' : 'Choose Another Location'}</Text>

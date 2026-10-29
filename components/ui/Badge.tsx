@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { badgeColors, colors, radius, spacing, textStyles } from '../../theme';
 import type { ProductBadge } from '../../types/models';
+import { visibleBadges } from '../../services/productBadges';
 
 const LABELS: Record<ProductBadge, string> = {
   bestseller: 'BESTSELLER',
@@ -21,6 +22,19 @@ export function ProductBadgePill({ kind }: { kind: ProductBadge }) {
       ]}
     >
       <Text style={[styles.text, { color: c.text }]}>{LABELS[kind]}</Text>
+    </View>
+  );
+}
+
+/** Every badge the product carries (up to two), stacked so a narrow card never clips them: Best Seller above Premium. */
+export function ProductBadgeStack({ badges }: { badges: readonly ProductBadge[] | undefined }) {
+  const shown = visibleBadges(badges);
+  if (shown.length === 0) return null;
+  return (
+    <View style={styles.stack}>
+      {shown.map((kind) => (
+        <ProductBadgePill key={kind} kind={kind} />
+      ))}
     </View>
   );
 }
@@ -49,6 +63,7 @@ export function Chip({
 }
 
 const styles = StyleSheet.create({
+  stack: { gap: 4, alignItems: 'flex-start' },
   pill: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,

@@ -27,6 +27,7 @@ import { OfflineBanner } from '../components/ui/OfflineBanner';
 import { ToastHost } from '../components/ui/ToastHost';
 import { InAppNotificationBanner } from '../components/notifications/InAppNotificationBanner';
 import { NewDeliveryPrompt } from '../components/rider/NewDeliveryPrompt';
+import { DeliveryPricingSync } from '../components/system/DeliveryPricingSync';
 import { CartFlyOverlay } from '../components/cart/CartFlyOverlay';
 import { useAuthStore } from '../store/authStore';
 import { configureNotificationHandler } from '../services/notifications/pushRegistration';
@@ -139,6 +140,9 @@ function RootLayout() {
             </OptionalBoundary>
             <OptionalBoundary name="NewDeliveryPrompt">
               <NewDeliveryPrompt />
+            </OptionalBoundary>
+            <OptionalBoundary name="DeliveryPricingSync">
+              <DeliveryPricingSync />
             </OptionalBoundary>
             <OptionalBoundary name="CartFlyOverlay">
               <CartFlyOverlay />

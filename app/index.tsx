@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, View, type DimensionValue } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type DimensionValue } from 'react-native';
 import { router } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
@@ -17,6 +17,7 @@ import { useAppStore } from '../store/appStore';
 import { useAuthStore } from '../store/authStore';
 import { useLocationStore } from '../store/locationStore';
 import { useNotificationResponseNavigation } from '../hooks/useNotificationResponseNavigation';
+import { startupDecision } from '../services/startupRoute';
 
 interface FloatingIconSpec {
   Icon: typeof Nut;
@@ -86,6 +87,9 @@ export default function SplashScreen() {
   // never fire in that case, or it wins the race and stomps the
   // notification's target a couple seconds later.
   const hasPendingNotificationTarget = useNotificationResponseNavigation();
+  // Signed in, but the profile could not be read: the account is NOT unknown or empty, so no name form — offer a retry instead.
+  const [profileUnavailable, setProfileUnavailable] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     logoOpacity.value = withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) });
@@ -102,31 +106,43 @@ export default function SplashScreen() {
     if (authStatus === 'loading') return;
     if (hasPendingNotificationTarget) return;
 
-    const minSplashMs = 1900;
+    // The brand splash is shown for a moment; a retry after a failed profile load goes straight on.
+    const minSplashMs = profileUnavailable ? 0 : 1900;
     const timer = setTimeout(() => {
       if (hasPendingNotificationTarget) return;
-      const isStoreUser = profile?.role === 'store_manager' || profile?.role === 'staff';
-      const isRider = profile?.role === 'rider';
-      const isAdmin = profile?.role === 'admin';
-      if (!hasOnboarded) router.replace('/onboarding');
-      else if (authStatus !== 'authenticated') router.replace('/login');
       // Store staff, riders, and admin all have no delivery location
       // and no customer shopping nav (section 45) — straight to their
-      // own operational surface.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- app/store/**, app/rider/**, app/admin/** are new; .expo/types/router.d.ts needs a local `expo start` (network access) to regenerate. Real, valid routes.
-      else if (isStoreUser) router.replace('/store' as any);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      else if (isRider) router.replace('/rider' as any);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      else if (isAdmin) router.replace('/admin' as any);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- app/welcome.tsx is new; .expo/types/router.d.ts needs a local `expo start` (network access) to regenerate. Real, valid route.
-      else if (!profile?.hasName) router.replace('/welcome' as any);
-      else if (!selectedLocation) router.replace('/location');
-      else router.replace('/(tabs)');
+      // own operational surface. A signed-in user whose profile could not
+      // be read goes nowhere yet (see services/startupRoute.ts).
+      const decision = startupDecision({
+        hasOnboarded,
+        authStatus: authStatus === 'authenticated' ? 'authenticated' : 'unauthenticated',
+        profile,
+        hasLocation: !!selectedLocation,
+      });
+      if (decision.kind === 'profile-unavailable') {
+        setProfileUnavailable(true);
+        return;
+      }
+      setProfileUnavailable(false);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- app/store/**, app/rider/**, app/admin/**, app/welcome.tsx are new; .expo/types/router.d.ts needs a local `expo start` (network access) to regenerate. Real, valid routes.
+      router.replace(decision.route as any);
     }, minSplashMs);
 
     return () => clearTimeout(timer);
-  }, [authStatus, hasOnboarded, selectedLocation, profile, hasPendingNotificationTarget]);
+  }, [authStatus, hasOnboarded, selectedLocation, profile, hasPendingNotificationTarget, profileUnavailable]);
+
+  const retryProfile = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await useAuthStore.getState().refreshProfile();
+    } catch {
+      // still offline — the message stays and the button can be pressed again
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const logoStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,
@@ -146,6 +162,18 @@ export default function SplashScreen() {
         <Monogram size={200} />
       </Animated.View>
       <Animated.Text style={[styles.tagline, taglineStyle]}>Quality You Can Taste</Animated.Text>
+      {profileUnavailable && (
+        <View style={styles.retryCard}>
+          <Text style={styles.retryTitle}>Couldn't load your account</Text>
+          <Text style={styles.retryText}>Check your internet connection and try again. Your details are safe.</Text>
+          <Pressable style={styles.retryButton} onPress={retryProfile} disabled={retrying} accessibilityRole="button">
+            {retrying ? <ActivityIndicator color={colors.primaryDarker} /> : <Text style={styles.retryButtonText}>Try again</Text>}
+          </Pressable>
+          <Pressable onPress={() => useAuthStore.getState().logout().catch(() => {})} hitSlop={8} accessibilityRole="button">
+            <Text style={styles.retryLink}>Sign out</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -169,6 +197,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  retryCard: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    bottom: 130,
+    alignItems: 'center',
+    gap: 10,
+    padding: 18,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(198,154,76,0.35)',
+  },
+  retryTitle: { fontFamily: 'PlusJakartaSans_700Bold', fontSize: 16, color: colors.white },
+  retryText: { fontFamily: 'PlusJakartaSans_400Regular', fontSize: 13, lineHeight: 19, textAlign: 'center', color: colors.goldTint },
+  retryButton: { minWidth: 160, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: colors.gold, paddingHorizontal: 20 },
+  retryButtonText: { fontFamily: 'PlusJakartaSans_700Bold', fontSize: 14, color: colors.primaryDarker },
+  retryLink: { fontFamily: 'PlusJakartaSans_500Medium', fontSize: 13, color: colors.goldTint, textDecorationLine: 'underline' },
   tagline: {
     position: 'absolute',
     bottom: 80,

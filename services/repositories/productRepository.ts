@@ -40,14 +40,21 @@ async function fetchRatings(productIds: string[]): Promise<Map<string, ProductRa
   return new Map((data as ProductRatingRow[]).map((r) => [r.product_id, r]));
 }
 
-async function fetchAvailability(variantIds: string[], storeId: string): Promise<Map<string, StockStatus>> {
+/**
+ * stock_status per variant for one store. A variant with NO inventory row at
+ * that store is simply absent from the map — toProduct reads that as "this store
+ * doesn't stock it". Resolves undefined when the lookup itself failed, so a
+ * network blip leaves stock unknown (the server still validates at checkout)
+ * instead of marking the whole catalogue out of stock.
+ */
+async function fetchAvailability(variantIds: string[], storeId: string): Promise<Map<string, StockStatus> | undefined> {
   if (variantIds.length === 0) return new Map();
   const { data, error } = await supabase
     .from('product_availability')
     .select('product_variant_id, stock_status')
     .eq('store_id', storeId)
     .in('product_variant_id', variantIds);
-  if (error) return new Map();
+  if (error) return undefined;
   return new Map(data.map((r) => [r.product_variant_id, r.stock_status as StockStatus]));
 }
 
@@ -57,11 +64,11 @@ async function mapAndEnrich(rows: ProductRow[], storeId?: string): Promise<Produ
 
   const [ratings, availability] = await Promise.all([
     fetchRatings(productIds),
-    storeId ? fetchAvailability(variantIds, storeId) : Promise.resolve(new Map<string, StockStatus>()),
+    storeId ? fetchAvailability(variantIds, storeId) : Promise.resolve(undefined),
   ]);
 
   const products = rows.map((row) =>
-    toProduct(row, { rating: ratings.get(row.id), availabilityByVariant: storeId ? availability : undefined, storeId }),
+    toProduct(row, { rating: ratings.get(row.id), availabilityByVariant: availability, storeId }),
   );
   cacheProducts(products);
   return products;

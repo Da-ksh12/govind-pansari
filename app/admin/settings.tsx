@@ -6,6 +6,7 @@ import { AdminShell } from '../../components/admin/AdminShell';
 import { useAdminStore } from '../../store/adminStore';
 import { useUIStore } from '../../store/uiStore';
 import { adminRepository } from '../../services/repositories/adminRepository';
+import { pushAdmin } from '../../services/adminNav';
 
 export default function AdminSettingsScreen() {
   const [settings, setSettings] = useState<any | null>(null);
@@ -29,12 +30,12 @@ export default function AdminSettingsScreen() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const field = (key: string) => draft[key] ?? settings?.[key] ?? '';
 
-  const saveField = async (key: string, apiKey: string, value: string, numeric = false) => {
+  const saveField = async (key: string, apiKey: string, value: string, numeric = false, range?: { min: number; max: number; label: string }) => {
     let payloadValue: string | number = value;
     if (numeric) {
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) {
-        showToast('Please enter a valid, non-negative number.', 'error');
+      if (!Number.isFinite(n) || n < 0 || (range && (n < range.min || n > range.max))) {
+        showToast(range ? `${range.label} must be between ${range.min} and ${range.max}.` : 'Please enter a valid, non-negative number.', 'error');
         setDraft((d) => { const next = { ...d }; delete next[key]; return next; });
         return;
       }
@@ -85,10 +86,29 @@ export default function AdminSettingsScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Order & Inventory Defaults</Text>
-          <Field label="Default Minimum Order Value (₹)" value={String(field('default_min_order_value'))} onChangeText={(v) => setDraft((d) => ({ ...d, default_min_order_value: v }))} onBlur={() => saveField('default_min_order_value', 'defaultMinOrderValue', field('default_min_order_value'), true)} editable={canManage} keyboardType="numeric" />
-          <Field label="Default Delivery Fee (₹)" value={String(field('default_delivery_fee'))} onChangeText={(v) => setDraft((d) => ({ ...d, default_delivery_fee: v }))} onBlur={() => saveField('default_delivery_fee', 'defaultDeliveryFee', field('default_delivery_fee'), true)} editable={canManage} keyboardType="numeric" />
+          {/* The delivery fee and the minimum order are NOT set here: customers are charged the delivery zone's own numbers, and the two
+              "default" fields that used to be here were read by nothing — an admin could change them and no price moved. They live under
+              Delivery & Pricing now. */}
+          <Pressable style={styles.pricingLink} onPress={() => pushAdmin('/admin/pricing')} accessibilityRole="button">
+            <Text style={styles.pricingLinkText}>Delivery fee, minimum order and free-delivery level are set per delivery area →</Text>
+          </Pressable>
           <Field label="Default Low-Stock Threshold" value={String(field('default_low_stock_threshold'))} onChangeText={(v) => setDraft((d) => ({ ...d, default_low_stock_threshold: v }))} onBlur={() => saveField('default_low_stock_threshold', 'defaultLowStockThreshold', field('default_low_stock_threshold'), true)} editable={canManage} keyboardType="numeric" />
           <Text style={styles.hint}>These are seed defaults only — per-store hours, per-zone serviceability, and per-rider capacity are managed on their own screens and are never overridden by this value.</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Delivery Area</Text>
+          <Field
+            label="Maximum delivery distance (km)"
+            value={String(field('max_delivery_radius_km'))}
+            onChangeText={(v) => setDraft((d) => ({ ...d, max_delivery_radius_km: v }))}
+            onBlur={() => saveField('max_delivery_radius_km', 'maxDeliveryRadiusKm', field('max_delivery_radius_km'), true, { min: 1, max: 50, label: 'The delivery distance' })}
+            editable={canManage}
+            keyboardType="numeric"
+          />
+          <Text style={styles.hint}>
+            A store serves customers up to this straight-line distance away. One value for every store; the customer app, checkout and order creation all use it. The nearest store that is open, accepting orders and holds the whole cart is chosen.
+          </Text>
         </View>
 
         <View style={styles.card}>
@@ -118,6 +138,8 @@ function Field({ label, value, onChangeText, onBlur, editable, keyboardType }: {
 }
 
 const styles = StyleSheet.create({
+  pricingLink: { paddingVertical: spacing.sm },
+  pricingLinkText: { ...textStyles.caption, color: colors.primary, fontFamily: 'PlusJakartaSans_600SemiBold', lineHeight: 17 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: spacing.lg, gap: spacing.md, maxWidth: 640, width: '100%', alignSelf: 'center' },
   card: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.xs },

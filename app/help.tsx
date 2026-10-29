@@ -23,7 +23,7 @@ const FAQS = [
   { q: 'How long does delivery take?', a: 'Most orders in Agra are delivered within 25–35 minutes, depending on your location and order volume.' },
   { q: 'What is your return policy?', a: 'We accept returns within 7 days for unopened, unused products. Contact support to initiate a return.' },
   { q: 'Do you offer Cash on Delivery?', a: 'Yes, COD is available for eligible orders and pincodes at checkout.' },
-  { q: 'How do I use a coupon code?', a: 'Apply your coupon code in the Cart or Checkout screen under "Offers & Coupons".' },
+  { q: 'Can I use a coupon code?', a: "Promo codes aren't available in the app yet. Your cart and checkout always show the exact amount you will pay, including delivery." },
 ];
 
 function whatsAppLink(message: string) {

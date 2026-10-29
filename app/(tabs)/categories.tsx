@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   contentWide: { alignItems: 'center' },
   wideInner: { width: '100%', maxWidth: 1100 },
   centerFill: { paddingVertical: spacing.xxl, alignItems: 'center', justifyContent: 'center' },
-  title: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary },
+  title: { ...textStyles.screenTitle, color: colors.textPrimary },
   subtitle: { ...textStyles.body, color: colors.textSecondary, marginTop: 2 },
   searchRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   searchBox: {

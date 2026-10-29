@@ -75,17 +75,22 @@ covers the same ground without a combinatorial state enum:
 | Route/ETA call failed | "Route temporarily unavailable" banner; no route line, no ETA text — never a stale or invented number |
 | Delivery is in a terminal state | Map and Realtime subscriptions aren't even mounted — see `docs/tracking-security.md` |
 
-## Reconnect handling (section 46)
+## Reconnect handling (section 46) — updated 2026-10-28, see `docs/realtime.md`
 
-Realtime sockets suspend when the app backgrounds. Rather than trust
-"the next event after reconnect will catch me up," the screen
-explicitly re-fetches `get_delivery_tracking()`:
+Realtime sockets suspend when the app backgrounds, and Postgres Changes never replays what was missed. The screen therefore
+re-fetches `get_delivery_tracking()`:
+- when the shared realtime layer reports a **gap** (a dropped channel came back) — for the order-level feed and for the
+  location feed — and once when each channel **first** becomes ready
 - on `AppState` transitioning to `active`
-- every 25s while the live phase is active, as a safety net independent
-  of any particular reconnect signal
-- immediately whenever a `delivery_assignments` status event arrives,
-  since a status change is exactly the moment other fields
-  (`deliveredAt`, `outForDeliveryAt`) are also likely to have changed
+- every 30s while the order is not finished (it used to run only in the live phase), as a safety net independent of any
+  particular reconnect signal
+- whenever the order row or one of its `delivery_assignments` changes. This feed is open from the moment the screen opens, so
+  *Tracking will start soon* turns into the live map by itself when a rider is assigned (it used to stay put until the customer
+  left and came back)
+
+The card shows **"Updated N s ago · ±accuracy"**, marks an imprecise fix *approximate* and an old one *stale*
+(`services/riderFreshness.ts`), and says when the customer's own phone is offline. Rider-side rules (fresh, precise, throttled,
+real GPS only; foreground-only — background location is not implemented) are in `services/location/riderFixPolicy.ts`.
 
 ## Related docs
 

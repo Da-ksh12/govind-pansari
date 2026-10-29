@@ -13,6 +13,7 @@ import { useAdminStore } from '../../store/adminStore';
 import { useUIStore } from '../../store/uiStore';
 import { adminRepository } from '../../services/repositories/adminRepository';
 import { useRefetchOnForeground } from '../../hooks/useRefetchOnForeground';
+import { useStableCallback } from '../../hooks/useStableCallback';
 import { pushAdmin } from '../../services/adminNav';
 
 export default function AdminRidersScreen() {
@@ -22,14 +23,24 @@ export default function AdminRidersScreen() {
   const showToast = useUIStore((s) => s.showToast);
   const canManage = hasPermission('riders.manage');
 
-  const load = useCallback(() => {
-    setLoading(true);
-    adminRepository.getRiders().then(setRiders).catch(() => setRiders([])).finally(() => setLoading(false));
+  // `silent`: a live refresh (realtime event / reconnect / foreground) keeps the riders on screen and survives a failed refresh.
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    adminRepository
+      .getRiders()
+      .then(setRiders)
+      .catch(() => {
+        if (!silent) setRiders([]);
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, []);
 
   useFocusEffect(load);
-  useEffect(() => adminRepository.subscribeToAdminRiders(load), [load]);
-  useRefetchOnForeground(load);
+  const refreshQuietly = useStableCallback(() => load(true));
+  useEffect(() => adminRepository.subscribeToAdminRiders(refreshQuietly), [refreshQuietly]);
+  useRefetchOnForeground(refreshQuietly);
 
   const toggleActive = async (rider: any) => {
     const next = !rider.is_active;
@@ -37,9 +48,10 @@ export default function AdminRidersScreen() {
     try {
       await adminRepository.setRiderActive(rider.id, next);
       showToast(next ? 'Rider activated' : 'Rider deactivated', 'success');
-    } catch {
+    } catch (e) {
       setRiders((prev) => prev.map((r) => (r.id === rider.id ? { ...r, is_active: !next } : r)));
-      showToast("Couldn't update the rider.", 'error');
+      // The server's own reason, e.g. "this rider has a delivery in progress — finish or cancel it first".
+      showToast(e instanceof Error ? e.message : "Couldn't update the rider.", 'error');
     }
   };
 
@@ -47,19 +59,23 @@ export default function AdminRidersScreen() {
   const offline = riders.filter((r) => !r.is_available && r.is_active).length;
   const inactive = riders.filter((r) => !r.is_active).length;
 
+  const header = (
+    <View style={styles.statsRow}>
+      <StatCard compact label="Total Riders" value={riders.length} icon={Bike} />
+      <StatCard compact label="Online" value={online} icon={Radio} tone="success" />
+      <StatCard compact label="Offline" value={offline} icon={MapPinOff} />
+      <StatCard compact label="Inactive" value={inactive} icon={Truck} />
+    </View>
+  );
+
   return (
     <AdminShell title="Riders" subtitle="Monitor your delivery fleet in real time">
-      <View style={styles.statsRow}>
-        <StatCard label="Total Riders" value={riders.length} icon={Bike} />
-        <StatCard label="Online" value={online} icon={Radio} tone="success" />
-        <StatCard label="Offline" value={offline} icon={MapPinOff} />
-        <StatCard label="Inactive" value={inactive} icon={Truck} />
-      </View>
       <FlatList
-        style={{ flex: 1 }}
+        style={styles.list}
         data={riders}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={header}
         refreshing={loading}
         onRefresh={load}
         ListEmptyComponent={!loading ? <EmptyState icon={Bike} title="No riders" subtitle="Invite a rider from Staff & Roles to get started." /> : null}
@@ -88,8 +104,9 @@ export default function AdminRidersScreen() {
 }
 
 const styles = StyleSheet.create({
-  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, padding: spacing.lg, paddingBottom: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
-  listContent: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
+  list: { flex: 1, minHeight: 0 },
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingBottom: spacing.xs },
+  listContent: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md,
     borderWidth: 1, borderColor: colors.border, ...shadows.xs,

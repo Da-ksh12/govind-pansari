@@ -1,119 +1,93 @@
-# Location & Serviceability
+# Location, delivery availability and store routing
 
-## Architecture
+Written 2026-10-27 after the Agra field test where real pins around Vijay Nagar, Wazirpura Road and Sanjay Place all
+showed "Currently unavailable for delivery".
 
-```
-locationService (expo-location)      geocodingService (interface)
-  permission state machine             .reverseGeocode(lat,lng)
-  getCurrentPosition()                 → default impl: expo-location's
-                                          on-device geocoder, no API key
-                    │                          │
-                    └──────────────┬───────────┘
-                                   ▼
-                    storeRepository.checkServiceability(position)
-                                   │
-                              check_serviceability() RPC (Postgres)
-                                   │
-                              find_serviceable_stores() (Phase 01)
-                                   │
-                    delivery_zones.boundary (PostGIS) ST_Covers check
-```
+## Root cause (reproduced against the live project)
 
-## Permission handling (sections 16-17)
+`find_serviceable_stores()` — the function behind "can we deliver here?" — ran with the **caller's** rights. It reads the
+`qa_test_mode` feature flag, and customers cannot read `feature_flags` (RLS: `settings.view` only). So for a customer the
+flag always read *off* and the **09:00–21:00 opening hours** were enforced; `resolve_checkout()` (SECURITY DEFINER) saw the
+flag *on* and ignored hours. The tester was testing at about 10 pm, after closing. Result:
 
-`services/location/locationService.ts` models every state the brief
-lists as one of five `LocationPermissionState` values (`not_requested`,
-`granted`, `denied`, `denied_permanently`, `unavailable`) plus a
-`LocationError` with a `code` (`PERMISSION_DENIED`, `GPS_DISABLED`,
-`TIMEOUT`, `UNAVAILABLE`) for the runtime-failure cases. Two things
-this specifically gets right, per the brief:
+* every address screen said "unavailable" while checkout would have accepted the same address;
+* a **closed store was reported as "we don't deliver to this location yet"** (`OUTSIDE_SERVICE_AREA`), instead of "we're closed";
+* run as a signed-in customer at 23:06 IST, all four screenshot coordinates returned `OUTSIDE_SERVICE_AREA`.
 
-- **Never re-prompts after permanent denial.** `requestPermission()`
-  checks `canAskAgain` first — if the OS has already permanently denied
-  it, this returns `denied_permanently` without ever calling
-  `requestForegroundPermissionsAsync()` again (which would otherwise
-  silently no-op or, on some OS versions, do nothing useful — checking
-  `canAskAgain` up front is what actually distinguishes "denied, can
-  ask again" from "denied permanently").
-- **No raw OS error strings reach the UI.** Every failure path in
-  `location.tsx`/`address/add.tsx` shows a `LocationError.message` like
-  "We couldn't get your location" or "Turn on location services to use
-  your current location" — never something like `LocationManager error
-  17`. `getCurrentPosition()` also races a 12s timeout against the
-  native call so "GPS just hangs" degrades to a clean `TIMEOUT` state
-  instead of an indefinite spinner.
+The coordinates themselves were fine: 76 m, 1.4 km, 1.9 km and 2.7 km from the Vijay Nagar store.
 
-## Reverse geocoding (section 19)
+## What changed (migration `20260827000018_single_serviceability_authority.sql`)
 
-`services/location/geocodingService.ts` is a `GeocodingService`
-interface with one method, `reverseGeocode(position)`. The only
-implementation right now uses `expo-location`'s on-device geocoder
-(no API key, works offline-ish, lower quality than a real
-Google/Mapbox geocoding API). Swapping providers later means writing a
-second object implementing the same interface and changing one export
-— no call site changes. If a future provider needs an API key, that
-key belongs server-side (an Edge Function) or in an
-`EXPO_PUBLIC_`-scoped key restricted by the provider itself to this
-app's bundle id / domain — never a general secret shipped in the app.
-
-## Map integration (section 20)
-
-No interactive map/pin-drop component exists yet — out of scope for
-this phase (explicitly deferred: "do not build the rider map yet", and
-a full picker is a bigger UI lift than an integration phase implies).
-What *is* in place, so a map component can be dropped in later without
-re-plumbing anything: `LatLng` coordinates flow end-to-end from
-`locationService`/`geocodingService` through `storeRepository` to the
-`addresses` table's `latitude`/`longitude` (+ generated PostGIS
-`geog`), and every screen that needs a coordinate
-(`location.tsx`, `address/add.tsx`) already gets one from
-`locationService.getCurrentPosition()` rather than a hardcoded value.
-
-## Serviceability (sections 21-25, 36)
-
-`check_serviceability(lat, lng)` (new this phase, Postgres function) is
-the single source of truth, called fresh every time — the app never
-carries a `serviceable = true` forward from a previous check.
-`locationStore.setLocation()` requires a `ServiceabilityResult`
-argument; there's no code path that marks a location serviceable
-without one having actually come back from the server.
+One chain, one definition of eligibility:
 
 ```
-storeRepository.checkServiceability(position)
-  → { serviceable: true, zoneId, deliveryFee, minimumOrderValue,
-      estimatedDeliveryMinutes, eligibleStores: [{storeId, storeName,
-      distanceMeters}, ...] }
-  → { serviceable: false, reason: 'OUTSIDE_SERVICE_AREA' }
+Add Address / location / Home  → check_serviceability() ┐
+Checkout summary / place order → resolve_checkout()     ┴→ find_serviceable_stores() → store_service_candidates()
 ```
 
-Built on top of Phase 01's `find_serviceable_stores()` (geofencing via
-`ST_Covers` against `delivery_zones.boundary`, ranked by explicit
-`priority` then distance) rather than duplicating that logic — it just
-reshapes the result into the clean, customer-safe response shape
-section 23 asks for. No hardcoded lat/lng range checks anywhere; every
-boundary is a real PostGIS polygon.
+* `store_service_candidates(lat, lng)` (internal, definer): every active store with its true geodesic distance (PostGIS
+  geography), inside the radius?, accepting orders?, open now? (`qa_test_mode` ignores hours).
+* **Eligibility is distance-based**: within `app_settings.max_delivery_radius_km` (**default 10 km**, editable in Admin →
+  Settings → Delivery Area, one value for every store). Delivery-zone polygons no longer decide eligibility (they were ~8 km
+  circles that silently capped the radius); a store's zone only supplies fee / minimum order / ETA.
+* Stores are ranked **nearest first** (`store_delivery_zones.priority` no longer overrides distance).
+* `check_serviceability()` says *why* when the answer is no: `OUTSIDE_SERVICE_AREA` (+ nearest store and its distance),
+  `STORE_CLOSED` (+ opening hours), `STORES_NOT_ACCEPTING_ORDERS`, `NO_ACTIVE_STORES`, `INVALID_COORDINATES`.
+* `resolve_checkout()` (summary and order creation): nearest eligible store **that holds the whole cart in stock**; a closer
+  store without stock is skipped; if nobody has everything → `CART_NOT_FULFILLABLE` (no order splitting); the same reason
+  codes as above; an address without coordinates is refused. The store is written onto the order server-side; customers
+  cannot update orders (RLS), and a retry returns the same order (idempotency key), so a later address change cannot reroute it.
+* The hard-coded single-store switch `qa_force_awas_vikas` is retired. **Sanjay Place**: only the *store* is inactive (the
+  row stays so old orders keep their store); its delivery zone is left as it is. Zones no longer decide eligibility, so a
+  customer in the Sanjay Place area is served by the nearest active store (Vijay Nagar, or Awas Vikas if Vijay Nagar can't).
 
-Store *selection* is deliberately not finalized here — `eligibleStores`
-is a ranked candidate list, and section 25's "future fulfillment
-engine can choose the final store" is left for the checkout phase.
+## App changes
 
-## Location context (section 26)
+* `services/serviceability.ts` — the one wording for every answer (+ GPS failure / accuracy wording, coordinate check).
+* Add Address shows the server's verdict as soon as a pin is set; saving an unavailable address is still allowed (checkout
+  re-checks); a failed check is "Couldn't check delivery — try again / save anyway", never "unsupported area".
+* Location screen and Checkout use the same wording; Home revalidates the selected location on open / foreground
+  (`hooks/useLocationRevalidation.ts`) and shows the server's status under the address.
+* GPS: `getCurrentFix()` (high accuracy + reported accuracy), the timeout is cleared, there is **no** last-known / default
+  fallback; permission denied / services off / timeout / weak fix each give an actionable message ending in "drop a pin on the map".
+* Map picker: it opens on an Agra view, but **Confirm is disabled until the pin is actually placed** (it used to save the
+  Agra city centre silently). GPS errors are shown.
+* The Home header no longer falls back to the hard-coded label "Sanjay Place, Agra" ("Choose delivery location" instead).
 
-`store/locationStore.ts` is the one place Home/Search/Product/Cart all
-read location from — `selected` (label/address line/coordinates),
-`serviceability` (the last `ServiceabilityResult`), and derived
-`etaMinMin`/`etaMinMax` for the existing UI's "25-35 min" display
-(the DB gives one `estimatedDeliveryMinutes` value; the range shown is
-`[value-10, value]`, clamped to a 10-minute floor). Persisted via
-AsyncStorage so a saved selection survives an app restart (section 27)
-— `app/index.tsx` only routes to `/location` when nothing is saved yet.
+## Cart
 
-## Verified live
+* Cause of "items disappear": `cartRepository.list()` swallowed errors (and used a network `getUser()` call), so a failed read
+  looked like an empty cart and the store **replaced and persisted an empty cart**; in-flight taps could be overwritten by a
+  slower sync; a failed call rolled back to a snapshot of the whole cart; the Cart screen decided "empty" from an in-memory
+  product cache. All fixed (`services/cartSync.ts`, `store/cartStore.ts`, `app/cart.tsx`).
+* Home header has a cart icon with the real item count, in every Home state (loading and failed included).
 
-`check_serviceability` returns `serviceable: true` with all 3 real
-stores (ranked by distance) for a Sanjay Place coordinate, and
-`serviceable: false` / `OUTSIDE_SERVICE_AREA` for a Delhi coordinate.
-Four more checks (inactive zone / inactive store / store not accepting
-orders / multiple eligible stores) run against throwaway rows in
-`supabase/tests/phase03-zone-checks.sql`, wrapped in a transaction
-that's rolled back regardless of outcome — see that file.
+## Store records (live)
+
+| Store | id | latitude, longitude | Evidence |
+|---|---|---|---|
+| Vijay Nagar (`GP-VJN`) | `00000000-0000-0000-0000-000000000102` | 27.20341, 78.022594 | The tester's Google Maps pin "North Vijay Nagar Colony" (27.203721, 78.021908) is 76 m away. |
+| Awas Vikas (`GP-AWV`) | `00000000-0000-0000-0000-000000000103` | 27.204239, 77.964982 | Avas Vikas Park, Sector 11 is at 27.201744, 77.966095 (latlong.net) — ~300 m away. No street address is stored (`Awas Vikas Colony, Agra`). |
+| Sanjay Place (`GP-SNP`) | `…0101` | 27.199, 78.0064 | Not a branch: store inactive (zone untouched). |
+
+The seed file `supabase/seed/01_catalogue_and_stores.sql` still holds **old, wrong** coordinates (the two stores' longitudes
+swapped); the live values above were corrected later. **Please confirm the exact shop addresses/coordinates of both stores.**
+
+## Tests
+
+```
+npm run test:unit                                   # 178 tests incl. serviceability.test.mjs and cart-sync.test.mjs
+SUPABASE_ACCESS_TOKEN=… node supabase/tests/serviceability-routing.test.mjs   # live, rolled back; applies the migration inside its own transaction if it is not live yet
+SUPABASE_ACCESS_TOKEN=… node supabase/tests/new-customer-rights.test.mjs
+```
+
+## Manual Android checklist
+
+1. Open the app → Home shows the cart icon top-right (with a count once something is added), before and after loading.
+2. Add two products, force-close the app, reopen: Home badge and Cart show the same two products; no duplicates.
+3. Add Address → Pin on Map: Confirm is disabled until you move the map; move it to North Vijay Nagar Colony (27.203721, 78.021908) → "Served by our Vijay Nagar store, 76 m away".
+4. Repeat for 27.200357,78.008876 · 27.197480,78.004878 · 27.197469,77.995645 → all served by Vijay Nagar (1.4 / 1.9 / 2.7 km).
+5. Move the pin near Sikandra (27.2203, 77.9514) → served by Awas Vikas; a pin in Mathura/Delhi → "Outside our delivery area".
+6. Turn GPS off / deny permission → Use Current Location shows an actionable message, nothing is filled in.
+7. Checkout with the Vijay Nagar address → order shows Vijay Nagar as the fulfilling store.
+8. Admin → Settings → Delivery Area shows 10 (km).

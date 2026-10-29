@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: colors.textPrimary },
   content: { paddingHorizontal: spacing.base, paddingBottom: spacing.xxl },
   hero: { alignItems: 'center', paddingVertical: spacing.xl },
-  heroTitle: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary, marginTop: spacing.md },
+  heroTitle: { ...textStyles.screenTitle, color: colors.textPrimary, marginTop: spacing.md },
   heroTagline: { ...textStyles.body, color: colors.gold, fontFamily: 'PlusJakartaSans_600SemiBold', marginTop: 2 },
   card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.base, marginBottom: spacing.md, ...shadows.sm },
   sectionTitle: { ...textStyles.cardTitle, fontSize: 16, color: colors.textPrimary, marginBottom: spacing.sm },

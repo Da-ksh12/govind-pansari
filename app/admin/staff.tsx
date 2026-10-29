@@ -102,6 +102,10 @@ export default function AdminStaffScreen() {
               {item.store_assignments?.map((s: any) => (
                 <Text key={s.storeId} style={styles.meta}>{s.storeName}</Text>
               ))}
+              {/* A store manager / staff member with no store receives no store orders or notifications (QA TC-24). */}
+              {(item.role === 'store_manager' || item.role === 'staff') && (item.store_assignments?.length ?? 0) === 0 && (
+                <Text style={styles.unassigned}>No store assigned — gets no orders or alerts</Text>
+              )}
             </View>
           </View>
         )}
@@ -294,6 +298,7 @@ const styles = StyleSheet.create({
   },
   name: { ...textStyles.cardTitle, fontSize: 14, color: colors.textPrimary },
   meta: { ...textStyles.caption, color: colors.textSecondary, marginTop: 2 },
+  unassigned: { ...textStyles.caption, color: colors.warning, fontFamily: 'PlusJakartaSans_700Bold', marginTop: 2 },
   roleBadge: { paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.surfaceSunken },
   roleBadgeAdmin: { backgroundColor: colors.primaryTint },
   roleBadgeText: { ...textStyles.caption, color: colors.textSecondary, fontSize: 10.5, textTransform: 'capitalize' },

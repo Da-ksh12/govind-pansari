@@ -1,5 +1,7 @@
 import type { LatLng } from '../../types/models';
 import type { GeocodeResult } from './geocodingService';
+import { AddressLookupError } from './addressTypes';
+import { parseNominatimReverse, sanePostalCode, type OsmReverse } from './osmAddress';
 
 export interface PlaceSearchResult extends GeocodeResult {
   id: string;
@@ -39,7 +41,8 @@ function toPlaceResult(item: NominatimItem): PlaceSearchResult {
     addressLine: item.display_name,
     city,
     state: addr.state,
-    postalCode: addr.postcode,
+    // OpenStreetMap has wrong PINs in places; one that cannot belong to the state is dropped rather than pre-filled.
+    postalCode: sanePostalCode(addr.postcode, addr.state) ?? undefined,
   };
 }
 
@@ -61,6 +64,10 @@ interface NominatimItem {
 }
 
 export const placesSearchService = {
+  /**
+   * Throws AddressLookupError('unavailable') when the service cannot be reached or refuses (rate limit): an empty array
+   * means "searched, found nothing", never "could not search" — the picker words those two differently.
+   */
   async search(query: string): Promise<PlaceSearchResult[]> {
     const q = query.trim();
     if (q.length < 2) return [];
@@ -83,13 +90,37 @@ export const placesSearchService = {
           Accept: 'application/json',
         },
       });
-      if (!response.ok) return [];
+      if (!response.ok) throw new AddressLookupError(response.status === 429 ? 'rate_limited' : 'unavailable');
       const data = (await response.json()) as NominatimItem[];
       return (data ?? []).map(toPlaceResult);
-    } catch {
-      // Offline, DNS hiccup, rate-limited — the picker still works by
-      // panning the map manually, this is purely additive.
-      return [];
+    } catch (e) {
+      // Offline, DNS hiccup, rate-limited — the picker still works by panning the map manually; it just says why search did not.
+      if (e instanceof AddressLookupError) throw e;
+      throw new AddressLookupError('unavailable');
+    }
+  },
+
+  /**
+   * What OpenStreetMap knows about the exact point (zoom 18 = building/road level): the road, the colony, the area. Null
+   * when it knows nothing there; throws AddressLookupError when it cannot be reached. Called when the pin settles, not while
+   * it moves, so a customer adjusting the pin produces a request per rest, not per frame.
+   */
+  async reverse(position: LatLng): Promise<OsmReverse | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    try {
+      const params = new URLSearchParams({ format: 'jsonv2', lat: String(position.lat), lon: String(position.lng), zoom: '18', addressdetails: '1' });
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
+        headers: { 'User-Agent': 'GovindPansariApp/1.0 (delivery app, Agra)', Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new AddressLookupError(response.status === 429 ? 'rate_limited' : 'unavailable');
+      return parseNominatimReverse(await response.json());
+    } catch (e) {
+      if (e instanceof AddressLookupError) throw e;
+      throw new AddressLookupError('unavailable');
+    } finally {
+      clearTimeout(timer);
     }
   },
 };

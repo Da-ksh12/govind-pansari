@@ -45,13 +45,21 @@ interface CartItemJoinRow {
  * something called on every render everywhere.
  */
 export const cartRepository = {
+  /**
+   * Throws when the cart cannot be read. "Could not read it" must never look like "it is empty": the caller
+   * replaces the on-device cart with this result, so an error swallowed into [] used to wipe a real cart (a dropped
+   * connection at startup was enough) and persist the empty cart.
+   */
   async list(): Promise<EnrichedCartItem[]> {
+    // The local session, not getUser(): getUser() is a network call, and a failed one reads as "signed out".
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) return [];
 
-    const { data: cart } = await supabase.from('carts').select('id').eq('user_id', user.id).maybeSingle();
+    const { data: cart, error: cartError } = await supabase.from('carts').select('id').eq('user_id', user.id).maybeSingle();
+    if (cartError) throw toCatalogueError(cartError);
     if (!cart) return [];
 
     const { data, error } = await supabase

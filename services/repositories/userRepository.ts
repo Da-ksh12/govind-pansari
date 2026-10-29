@@ -39,14 +39,29 @@ export interface ProfileUpdateInput {
   avatarUrl?: string;
 }
 
-export const userRepository = {
-  async getProfile(): Promise<UserProfile> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('Not signed in');
+/** There is no session. Unlike a network error, trying again cannot fix this. */
+export class NotSignedInError extends Error {
+  constructor() {
+    super('Not signed in');
+  }
+}
 
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+export const userRepository = {
+  /**
+   * The signed-in user's profile. Pass `userId` when the caller already has it (the auth listener does): the id then costs no
+   * request at all, where `auth.getUser()` is a server round trip that fails on a weak connection before the profile is even asked for.
+   */
+  async getProfile(userId?: string): Promise<UserProfile> {
+    let id = userId;
+    if (!id) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) throw new NotSignedInError();
+      id = session.user.id;
+    }
+
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single();
     if (error) throw toCatalogueError(error);
     return toUserProfile(data as ProfileRow);
   },

@@ -1,4 +1,5 @@
-import { supabase, uniqueChannel } from '../supabase/client';
+import { supabase } from '../supabase/client';
+import { liveFeed } from '../realtime/liveFeed';
 import { toCatalogueError } from '../supabase/errors';
 import type { OrderStatus } from '../../types/models';
 
@@ -96,42 +97,51 @@ export const trackingRepository = {
    * an unauthorized client filtering for someone else's delivery_id
    * gets no events, guessable channel name notwithstanding.
    */
-  subscribeToLocation(deliveryId: string, onUpdate: (location: LiveLocation) => void): () => void {
-    const channel = uniqueChannel(`rider-location-${deliveryId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'rider_locations', filter: `delivery_id=eq.${deliveryId}` },
-        (payload) => {
-          const row = payload.new as any;
-          if (row.is_outlier) return; // section 10: never surface a flagged jump to the customer
-          onUpdate({
-            latitude: row.latitude,
-            longitude: row.longitude,
-            heading: row.heading ?? null,
-            speed: row.speed ?? null,
-            accuracy: row.accuracy ?? null,
-            recordedAt: row.recorded_at,
-          });
-        },
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+  subscribeToLocation(deliveryId: string, onUpdate: (location: LiveLocation) => void, onResync?: () => void): () => void {
+    return liveFeed.watchRows(
+      { table: 'rider_locations', event: 'INSERT', filter: `delivery_id=eq.${deliveryId}` },
+      (change) => {
+        const row = change.new as any;
+        if (row.is_outlier) return; // section 10: never surface a flagged jump to the customer
+        onUpdate({
+          latitude: row.latitude,
+          longitude: row.longitude,
+          heading: row.heading ?? null,
+          speed: row.speed ?? null,
+          accuracy: row.accuracy ?? null,
+          recordedAt: row.recorded_at,
+        });
+      },
+      // Pings sent while the socket was down (or before it finished joining) are never replayed: the caller re-reads the latest stored location.
+      { onResync, catchUpOnConnect: !!onResync },
+    );
   },
 
   /** Delivery status changes (accepted / at_store / picked_up / in_transit / completed / failed) — lets the screen react without polling. */
-  subscribeToDeliveryStatus(deliveryId: string, onUpdate: (status: string) => void): () => void {
-    const channel = uniqueChannel(`delivery-status-${deliveryId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'delivery_assignments', filter: `id=eq.${deliveryId}` },
-        (payload) => onUpdate((payload.new as any).status),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+  subscribeToDeliveryStatus(deliveryId: string, onUpdate: (status: string) => void, onResync?: () => void): () => void {
+    return liveFeed.watchRows(
+      { table: 'delivery_assignments', event: 'UPDATE', filter: `id=eq.${deliveryId}` },
+      (change) => onUpdate((change.new as any).status),
+      { onResync, catchUpOnConnect: !!onResync },
+    );
+  },
+
+  /**
+   * Everything that changes what the customer's tracking screen shows, from the moment the order is placed:
+   * the order row (status, including 'approaching') and its delivery assignments (a rider gets assigned, accepts,
+   * picks up, completes, or the assignment is reassigned). Unlike subscribeToDeliveryStatus this works BEFORE a
+   * rider exists — the screen used to stay on "Tracking will start soon" until the customer left and came back.
+   * RLS scopes both tables to this customer's own order; the filter is only routing.
+   */
+  subscribeToOrderTracking(orderId: string, onChange: () => void): () => void {
+    return liveFeed.watch(
+      [
+        { table: 'orders', filter: `id=eq.${orderId}` },
+        { table: 'delivery_assignments', filter: `order_id=eq.${orderId}` },
+      ],
+      onChange,
+      { coalesceMs: 250, catchUpOnConnect: true, resyncOnForeground: true },
+    );
   },
 
   /**
@@ -145,15 +155,6 @@ export const trackingRepository = {
    * subscribeToDeliveryStatus does.
    */
   subscribeToOrderStatus(orderId: string, onUpdate: (status: string) => void): () => void {
-    const channel = uniqueChannel(`order-status-${orderId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
-        (payload) => onUpdate((payload.new as any).status),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return liveFeed.watchRows({ table: 'orders', event: 'UPDATE', filter: `id=eq.${orderId}` }, (change) => onUpdate((change.new as any).status));
   },
 };

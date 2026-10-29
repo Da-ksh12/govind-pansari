@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import BottomSheet from '@gorhom/bottom-sheet';
@@ -9,6 +9,8 @@ import { SafeScreen } from '../../components/layout/SafeScreen';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { AppBottomSheet } from '../../components/ui/AppBottomSheet';
 import { useStoreOpsStore } from '../../store/storeOpsStore';
+import { useStableCallback } from '../../hooks/useStableCallback';
+import { useRefetchOnForeground } from '../../hooks/useRefetchOnForeground';
 import {
   storeOpsRepository,
   type InventoryAdjustmentReason,
@@ -49,6 +51,15 @@ export default function StoreInventoryScreen() {
   }, [activeStoreId, query]);
 
   useFocusEffect(load);
+
+  // Live: stock at this store changes while the screen is open (a picker takes items, a restock lands, another manager
+  // adjusts). Refreshes the rows in place — no spinner, and a failed refresh keeps what is on screen.
+  const refreshQuietly = useStableCallback(() => {
+    if (!activeStoreId) return;
+    storeOpsRepository.listInventory(activeStoreId, query).then(setRows).catch(() => {});
+  });
+  useEffect(() => (activeStoreId ? storeOpsRepository.subscribeToStoreInventory(activeStoreId, refreshQuietly) : undefined), [activeStoreId, refreshQuietly]);
+  useRefetchOnForeground(refreshQuietly);
 
   const openAdjust = (row: StoreInventoryRow) => {
     setSelected(row);

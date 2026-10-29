@@ -1,6 +1,9 @@
-import { supabase, uniqueChannel } from '../supabase/client';
+import { supabase } from '../supabase/client';
+import { liveFeed } from '../realtime/liveFeed';
 import { toCatalogueError } from '../supabase/errors';
 import { getDeliveryProofPhotoUrl } from '../storage/deliveryProof';
+import { awaitsOnlinePayment } from '../orderFilters';
+import type { RiderAttempt, RiderStatus } from '../riderAssignment';
 import type { OrderStatus } from '../../types/models';
 
 export interface MyStoreAssignment {
@@ -78,6 +81,8 @@ export interface StoreOrderDetail {
   addressLine1: string;
   addressLine2: string | null;
   landmark: string | null;
+  /** The customer's note for the rider, from the order's address snapshot. */
+  deliveryInstructions: string | null;
   city: string;
   items: StoreOrderItem[];
 }
@@ -106,14 +111,20 @@ export interface StaffMember {
   isActive: boolean;
 }
 
-export interface EligibleRider {
+/** One row of the manual "choose a rider" list (get_riders_for_assignment) — every active rider, with a status and whether they can take this order now. */
+export interface AssignableRider {
   riderId: string;
   name: string;
+  avatarUrl: string | null;
   vehicleType: string;
   vehicleNumber: string | null;
   sameStore: boolean;
+  status: RiderStatus;
   activeDeliveries: number;
   capacity: number;
+  canAssign: boolean;
+  distanceMeters: number | null;
+  locationAgeSeconds: number | null;
 }
 
 /** Final Dispatch pass — distance-aware eligibility preview for the "Send Rider" flow, distinct from the older getEligibleRiders (used by the manual-pick sheet, no distance). start_dispatch_round() calls the exact same backend function, so this preview is always exactly who actually gets offered. */
@@ -152,6 +163,8 @@ export interface OrderDeliveryStatus {
   riderName: string;
   status: DeliveryStageStatus;
   assignedAt: string;
+  /** While status is 'assigned': when the rider's request lapses (assignment_expiry_minutes) — null once accepted. */
+  expiresAt: string | null;
 }
 
 export interface CompletedDeliveryProof {
@@ -212,6 +225,7 @@ function toOrderDetail(row: any): StoreOrderDetail {
     addressLine1: addr.address_line_1 ?? '',
     addressLine2: addr.address_line_2 ?? null,
     landmark: addr.landmark ?? null,
+    deliveryInstructions: addr.delivery_instructions ?? null,
     city: addr.city ?? '',
     items: (row.order_items ?? []).map((i: any) => ({
       id: i.id,
@@ -285,18 +299,22 @@ export const storeOpsRepository = {
     };
   },
 
-  /** Order queue for one store, optionally filtered to a set of statuses — RLS (is_store_staff) already scopes this to the caller's own store. */
+  /**
+   * Order queue for one store, optionally filtered to a set of statuses — RLS (is_store_staff) already scopes this to the caller's own store.
+   * Prepaid orders whose payment hasn't been verified are left out: the server refuses to accept them (order_awaits_online_payment), so listing
+   * them as "New" would show staff an order they can't act on, and the dashboard counts (get_store_dashboard) already exclude them.
+   */
   async listOrders(storeId: string, statuses?: OrderStatus[]): Promise<StoreOrderSummary[]> {
     let query = supabase
       .from('orders')
-      .select('id, order_number, status, placed_at, total, payment_status, has_exception, delivery_address, order_items(id)')
+      .select('id, order_number, status, placed_at, total, payment_status, has_exception, delivery_address, order_items(id), payments(method, created_at)')
       .eq('store_id', storeId)
       .order('placed_at', { ascending: false })
       .limit(100);
     if (statuses && statuses.length > 0) query = query.in('status', statuses);
     const { data, error } = await query;
     if (error) throw toCatalogueError(error);
-    return (data ?? []).map((r: any) => ({
+    return (data ?? []).filter((r: any) => !awaitsOnlinePayment(r.payment_status, r.payments)).map((r: any) => ({
       id: r.id,
       orderNumber: r.order_number,
       status: r.status,
@@ -332,6 +350,18 @@ export const storeOpsRepository = {
     const { error } = await supabase.rpc('mark_order_item_picked', { p_order_item_id: orderItemId, p_status: status });
     if (error) throw toCatalogueError(error);
   },
+  /** "We found it" — puts an unavailable item back to pending so it has to be genuinely picked; the order's exception clears only when no unavailable item is left. Manager/admin only (enforced by reopen_unavailable_item). */
+  async reopenUnavailableItem(orderItemId: string, notes?: string) {
+    const { error } = await supabase.rpc('reopen_unavailable_item', { p_order_item_id: orderItemId, p_notes: notes ?? null });
+    if (error) throw toCatalogueError(error);
+  },
+
+  /** Cancels the order with a reason (releases the stock reservation and notifies the customer) — the other way to resolve an unavailable item. */
+  async cancelOrder(orderId: string, reason: string) {
+    const { error } = await supabase.rpc('update_order_status', { p_order_id: orderId, p_new_status: 'cancelled', p_reason: reason });
+    if (error) throw toCatalogueError(error);
+  },
+
   async resolveException(orderId: string, notes?: string) {
     const { error } = await supabase.rpc('resolve_order_exception', { p_order_id: orderId, p_notes: notes ?? null });
     if (error) throw toCatalogueError(error);
@@ -437,17 +467,38 @@ export const storeOpsRepository = {
     }));
   },
 
-  async getEligibleRiders(orderId: string): Promise<EligibleRider[]> {
-    const { data, error } = await supabase.rpc('get_eligible_riders_for_order', { p_order_id: orderId });
+  /** Every active rider with their status (free / delivering / offline ...) for the manual picker, best choices first. Riders are only ever assigned by a person choosing one — there is no automatic assignment. */
+  async getRidersForAssignment(orderId: string): Promise<AssignableRider[]> {
+    const { data, error } = await supabase.rpc('get_riders_for_assignment', { p_order_id: orderId });
     if (error) throw toCatalogueError(error);
     return (data ?? []).map((r: any) => ({
       riderId: r.riderId,
-      name: r.name,
+      name: r.name ?? 'Rider',
+      avatarUrl: r.avatarUrl ?? null,
       vehicleType: r.vehicleType,
-      vehicleNumber: r.vehicleNumber,
-      sameStore: r.sameStore,
+      vehicleNumber: r.vehicleNumber ?? null,
+      sameStore: !!r.sameStore,
+      status: r.status,
       activeDeliveries: r.activeDeliveries,
       capacity: r.capacity,
+      canAssign: !!r.canAssign,
+      distanceMeters: r.distanceMeters != null ? Number(r.distanceMeters) : null,
+      locationAgeSeconds: r.locationAgeSeconds != null ? Number(r.locationAgeSeconds) : null,
+    }));
+  },
+
+  /** Who was asked for this order and how each attempt ended, newest first — drives the "this rider did not accept, choose another" prompt. */
+  async getOrderRiderAttempts(orderId: string): Promise<RiderAttempt[]> {
+    const { data, error } = await supabase.rpc('get_order_rider_attempts', { p_order_id: orderId });
+    if (error) throw toCatalogueError(error);
+    return (data ?? []).map((a: any) => ({
+      assignmentId: a.assignmentId,
+      riderId: a.riderId,
+      riderName: a.riderName ?? 'The rider',
+      status: a.status,
+      reason: a.reason ?? null,
+      assignedAt: a.assignedAt,
+      endedAt: a.endedAt ?? null,
     }));
   },
 
@@ -455,29 +506,6 @@ export const storeOpsRepository = {
     const { data, error } = await supabase.rpc('assign_rider', { p_order_id: orderId, p_rider_id: riderId });
     if (error) throw toCatalogueError(error);
     return data as string;
-  },
-
-  /**
-   * "Auto-Assign Rider" (final production pass, section 22/25) — the
-   * server picks a single eligible rider and assigns them directly, no
-   * acceptance popup (distinct from startDispatchRound/"Send Rider",
-   * which broadcasts to every eligible rider and waits for one to
-   * accept). Tries immediately; if nobody currently qualifies, opens a
-   * round that retry_auto_assignment_rounds() (pg_cron, every minute)
-   * keeps trying on for up to assignment_expiry_minutes() — the store
-   * UI should treat 'AUTO_ASSIGNING' as "still looking" and poll
-   * getLatestDispatchRound or wait for its realtime subscription.
-   */
-  async startAutoAssignment(orderId: string): Promise<{ success: boolean; code: 'ASSIGNED' | 'AUTO_ASSIGNING'; dispatchRoundId: string; riderId?: string; assignmentId?: string; expiresAt?: string }> {
-    const { data, error } = await supabase.rpc('start_auto_assignment', { p_order_id: orderId });
-    if (error) throw toCatalogueError(error);
-    return data;
-  },
-
-  /** Store manager's explicit "Stop Auto Assignment" (section 28/29) — server-authoritative; the next retry tick simply won't see this round as open anymore. Never touches the order itself. */
-  async stopAutoAssignment(dispatchRoundId: string): Promise<void> {
-    const { error } = await supabase.rpc('stop_auto_assignment', { p_round_id: dispatchRoundId });
-    if (error) throw toCatalogueError(error);
   },
 
   async cancelAssignment(assignmentId: string, reason?: string) {
@@ -540,11 +568,14 @@ export const storeOpsRepository = {
 
   /** Realtime for the store order screen while a dispatch round is open (section 11) — "something about this round/its offers changed, go refetch", same pattern as every other realtime subscription in this repository. */
   subscribeToDispatchRound(roundId: string, onChange: () => void): () => void {
-    const channel = uniqueChannel(`dispatch-round-${roundId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_dispatch_rounds', filter: `id=eq.${roundId}` }, onChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_offers', filter: `dispatch_round_id=eq.${roundId}` }, onChange)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
+    return liveFeed.watch(
+      [
+        { table: 'delivery_dispatch_rounds', filter: `id=eq.${roundId}` },
+        { table: 'delivery_offers', filter: `dispatch_round_id=eq.${roundId}` },
+      ],
+      onChange,
+      { catchUpOnConnect: true },
+    );
   },
 
   /**
@@ -557,20 +588,25 @@ export const storeOpsRepository = {
    * screen's own refresh logic without duplicating it here.
    */
   subscribeToStoreActivity(storeId: string, onChange: () => void): () => void {
-    const channel = uniqueChannel(`store-ops-${storeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `store_id=eq.${storeId}` }, onChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments', filter: `store_id=eq.${storeId}` }, onChange)
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return liveFeed.watch(
+      [
+        { table: 'orders', filter: `store_id=eq.${storeId}` },
+        { table: 'delivery_assignments', filter: `store_id=eq.${storeId}` },
+      ],
+      onChange,
+    );
+  },
+
+  /** Realtime for the store's Inventory screen: stock changes at this store only (picking, restock, an admin adjustment). */
+  subscribeToStoreInventory(storeId: string, onChange: () => void): () => void {
+    return liveFeed.watch([{ table: 'inventory', filter: `store_id=eq.${storeId}` }], onChange);
   },
 
   /** The active (non-terminal) delivery for this order, if any — null once the order has none (never assigned yet, or terminated). */
   async getOrderDeliveryStatus(orderId: string): Promise<OrderDeliveryStatus | null> {
     const { data, error } = await supabase
       .from('delivery_assignments')
-      .select('id, status, assigned_at, riders(profiles(full_name))')
+      .select('id, status, assigned_at, expires_at, riders(profiles(full_name))')
       .eq('order_id', orderId)
       .not('status', 'in', '(completed,cancelled,declined,expired,failed)')
       .order('assigned_at', { ascending: false })
@@ -583,6 +619,7 @@ export const storeOpsRepository = {
       riderName: (data as any).riders?.profiles?.full_name ?? 'Rider',
       status: data.status as DeliveryStageStatus,
       assignedAt: data.assigned_at,
+      expiresAt: data.status === 'assigned' ? (data as any).expires_at ?? null : null,
     };
   },
 

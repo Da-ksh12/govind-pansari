@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import { colors, radius, spacing, textStyles } from '../theme';
@@ -28,6 +28,23 @@ export default function WelcomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
+
+  // This screen is for an account whose name is really empty on the server. If a stale or half-loaded profile brought the user here
+  // and the server already has their name, carry on instead of asking again.
+  useEffect(() => {
+    let alive = true;
+    refreshProfile()
+      .then(() => {
+        if (alive && useAuthStore.getState().profile?.hasName) router.replace(selectedLocation ? '/(tabs)' : '/location');
+      })
+      .catch(() => {
+        // offline: the form below still works
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const showEmail = !profile?.email;
   const canContinue = name.trim().length > 1 && (!showEmail || email.trim() === '' || EMAIL_RE.test(email.trim())) && !saving;

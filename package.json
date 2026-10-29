@@ -19,6 +19,7 @@
     "expo-font": "~57.0.1",
     "expo-haptics": "~57.0.3",
     "expo-image": "~57.0.5",
+    "expo-image-manipulator": "~57.0.21",
     "expo-image-picker": "~57.0.20",
     "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.13",
@@ -33,6 +34,7 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
+    "react-native-maps": "1.27.2",
     "react-native-razorpay": "^3.0.0",
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
@@ -54,7 +56,8 @@
     "dev": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test:unit": "node --no-warnings --import ./tests/unit/register-ts-resolver.mjs --test \"tests/unit/*.test.mjs\""
   },
   "private": true,
   "allowScripts": {

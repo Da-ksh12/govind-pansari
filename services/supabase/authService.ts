@@ -1,54 +1,11 @@
 import { supabase } from './client';
 import { toE164 } from '../phone';
+import { AuthFlowError, classifyAuthError } from '../authErrors';
 
-export type AuthErrorCode = 'INVALID_PHONE' | 'INVALID_OTP' | 'RATE_LIMITED' | 'NETWORK_ERROR' | 'UNKNOWN';
-
-export class AuthFlowError extends Error {
-  readonly code: AuthErrorCode;
-  constructor(code: AuthErrorCode, message: string) {
-    super(message);
-    this.name = 'AuthFlowError';
-    this.code = code;
-  }
-}
-
-function classifyAuthError(error: unknown): AuthFlowError {
-  const err = error as { code?: string; status?: number; message?: string; name?: string } | null;
-  if (!err) return new AuthFlowError('UNKNOWN', 'Something went wrong. Please try again.');
-
-  switch (err.code) {
-    case 'otp_expired':
-    case 'invalid_credentials':
-      return new AuthFlowError('INVALID_OTP', 'That code is incorrect or has expired.');
-    case 'over_sms_send_rate_limit':
-    case 'over_request_rate_limit':
-      return new AuthFlowError('RATE_LIMITED', 'Too many attempts. Please wait a moment before trying again.');
-    case 'sms_send_failed':
-    case 'phone_provider_disabled':
-      return new AuthFlowError('UNKNOWN', "We couldn't send a code to that number right now.");
-    // GoTrue returns this when no SMS provider is configured on the
-    // project at all (confirmed live: "Unable to get SMS provider") —
-    // a project-config problem, not the user's connection. Checked
-    // before the network fallback below since supabase-js surfaces
-    // this as a plain AuthApiError with a real code, not a fetch
-    // failure, whenever the response actually reaches the client
-    // (i.e. not masked by a browser CORS failure on web).
-    case 'unexpected_failure':
-      return new AuthFlowError('UNKNOWN', "SMS sign-in isn't set up for this app yet. Please contact support.");
-    case 'validation_failed':
-      return new AuthFlowError('INVALID_PHONE', "That doesn't look like a valid mobile number.");
-    default:
-      if (err.status === 403) return new AuthFlowError('INVALID_OTP', 'That code is incorrect or has expired.');
-      if (err.status === 429) return new AuthFlowError('RATE_LIMITED', 'Too many attempts. Please wait a moment before trying again.');
-      // A true fetch-level failure (offline, DNS, connection refused) —
-      // checked last since a real API error with a clear code/message
-      // should never be downgraded to this generic fallback.
-      if (err.name === 'AuthRetryableFetchError' || err.message?.toLowerCase().includes('network')) {
-        return new AuthFlowError('NETWORK_ERROR', "Couldn't reach the server. Check your connection and try again.");
-      }
-      return new AuthFlowError('UNKNOWN', err.message ?? 'Something went wrong. Please try again.');
-  }
-}
+// The classifier lives in ../authErrors (no React Native / client imports, so it is unit-tested);
+// screens keep importing AuthFlowError from here.
+export { AuthFlowError };
+export type { AuthErrorCode } from '../authErrors';
 
 export const authService = {
   /** Sends (or resends) an OTP via Supabase's phone provider — never a custom/manual OTP. */

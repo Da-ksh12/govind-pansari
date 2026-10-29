@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { getCachedVariant } from '../services/supabase/productCache';
 import { useCartStore } from '../store/cartStore';
+import { useDeliveryPricingStore } from '../store/deliveryPricingStore';
+import { FALLBACK_PRICING, quoteDelivery } from '../services/deliveryPricing';
 import type { Product, ProductVariant } from '../types/models';
 
 export interface CartLine {
@@ -12,11 +14,10 @@ export interface CartLine {
   lineMrp: number;
 }
 
-export const FREE_DELIVERY_THRESHOLD = 499;
-const STANDARD_DELIVERY_FEE = 40;
-
 export function useCartLines() {
   const items = useCartStore((s) => s.items);
+  // The delivery fee and free-delivery level come from the server (the delivery zone's own numbers), not from constants in the app.
+  const pricing = useDeliveryPricingStore((s) => s.pricing) ?? FALLBACK_PRICING;
 
   return useMemo(() => {
     const active = items.filter((i) => !i.savedForLater);
@@ -41,8 +42,7 @@ export function useCartLines() {
     const itemTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
     const mrpTotal = lines.reduce((sum, l) => sum + l.lineMrp, 0);
     const totalCount = lines.reduce((sum, l) => sum + l.quantity, 0);
-    const deliveryFee = itemTotal === 0 || itemTotal >= FREE_DELIVERY_THRESHOLD ? 0 : STANDARD_DELIVERY_FEE;
-    const amountToFreeDelivery = Math.max(0, FREE_DELIVERY_THRESHOLD - itemTotal);
+    const { deliveryFee, amountToFreeDelivery, freeDeliveryProgress, hasFreeDelivery } = quoteDelivery(itemTotal, pricing);
     const savings = mrpTotal - itemTotal;
 
     return {
@@ -53,9 +53,10 @@ export function useCartLines() {
       totalCount,
       deliveryFee,
       amountToFreeDelivery,
-      freeDeliveryProgress: Math.min(1, itemTotal / FREE_DELIVERY_THRESHOLD),
+      freeDeliveryProgress,
+      hasFreeDelivery,
       savings,
       grandTotal: itemTotal + deliveryFee,
     };
-  }, [items]);
+  }, [items, pricing]);
 }

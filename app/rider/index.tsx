@@ -12,6 +12,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useNotificationsStore } from '../../store/notificationsStore';
 import { riderOpsRepository, type RiderDashboard } from '../../services/repositories/riderOpsRepository';
 import { useRefetchOnForeground } from '../../hooks/useRefetchOnForeground';
+import { riderLocationService } from '../../services/location/riderLocationService';
+import { interruptedProofAssignmentId } from '../../services/storage/deliveryProof';
 
 const STATUS_META: Record<RiderDashboard['status'], { label: string; color: string; bg: string }> = {
   offline: { label: 'OFFLINE', color: colors.textMuted, bg: colors.surfaceSunken },
@@ -51,6 +53,21 @@ export default function RiderHomeScreen() {
 
   useFocusEffect(load);
 
+  // Android may have killed the app while the rider's camera was open for the delivery photo: the restarted app lands here, so take
+  // the rider straight back to that delivery (its screen asks the camera for the photo that was lost). Once per launch.
+  useEffect(() => {
+    let alive = true;
+    interruptedProofAssignmentId()
+      .then((assignmentId) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- app/rider/** is new; .expo/types/router.d.ts needs a local `expo start` to regenerate. Real, valid route.
+        if (alive && assignmentId) router.push(`/rider/delivery/${assignmentId}` as any);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Priority 13 (pre-production hardening): live assignment updates —
   // previously this screen only refreshed on focus, so a new
   // assignment from a store manager/admin sat unseen until the rider
@@ -60,6 +77,17 @@ export default function RiderHomeScreen() {
     return riderOpsRepository.subscribeToRiderActivity(dashboard.riderId, load);
   }, [dashboard?.riderId, load]);
   useRefetchOnForeground(load);
+
+  // A rider who reopens the app mid-delivery lands here, not on the delivery screen: resume sharing for a leg that is
+  // genuinely in progress (never for an unaccepted assignment), and release it once there is none.
+  const activeLegStatus = dashboard?.currentAssignment?.status;
+  useEffect(() => {
+    if (activeLegStatus && ['accepted', 'at_store', 'picked_up', 'in_transit'].includes(activeLegStatus)) {
+      riderLocationService.start().catch(() => {});
+    } else if (dashboard && !activeLegStatus) {
+      riderLocationService.stop();
+    }
+  }, [activeLegStatus, dashboard]);
 
   const handleToggleAvailability = async () => {
     if (!dashboard) return;

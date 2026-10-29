@@ -15,33 +15,43 @@ import { useUIStore } from '../../../store/uiStore';
 import { adminRepository } from '../../../services/repositories/adminRepository';
 import { useRefetchOnForeground } from '../../../hooks/useRefetchOnForeground';
 import { useStableCallback } from '../../../hooks/useStableCallback';
+import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 
 const PAGE_SIZE = 30;
 
 export default function AdminProductsScreen() {
   const [products, setProducts] = useState<any[]>([]);
   const [stats, setStats] = useState<{ total: number; active: number; categories: number } | null>(null);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim(), 350);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const hasPermission = useAdminStore((s) => s.hasPermission);
   const showToast = useUIStore((s) => s.showToast);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([
-      adminRepository.getProducts({ search: search || undefined, limit: PAGE_SIZE }),
-      adminRepository.getProductStats().catch(() => null),
-    ])
-      .then(([rows, s]) => {
-        setProducts(rows);
-        setHasMore(rows.length === PAGE_SIZE);
-        if (s) setStats(s);
-      })
-      .catch(() => setProducts([]))
-      .finally(() => setLoading(false));
-  }, [search]);
+  // `silent`: a live refresh keeps the list on screen and leaves it as it was if the refresh fails.
+  const load = useCallback(
+    (silent = false) => {
+      if (!silent) setLoading(true);
+      Promise.all([
+        adminRepository.getProducts({ search: search || undefined, limit: PAGE_SIZE }),
+        adminRepository.getProductStats().catch(() => null),
+      ])
+        .then(([rows, s]) => {
+          setProducts(rows);
+          setHasMore(rows.length === PAGE_SIZE);
+          if (s) setStats(s);
+        })
+        .catch(() => {
+          if (!silent) setProducts([]);
+        })
+        .finally(() => {
+          if (!silent) setLoading(false);
+        });
+    },
+    [search],
+  );
 
   const loadMore = () => {
     if (!hasMore || loadingMore || loading || products.length === 0) return;
@@ -60,9 +70,9 @@ export default function AdminProductsScreen() {
   // Stable across search-box keystrokes (search is one of `load`'s own
   // deps) so a realtime edit elsewhere doesn't tear down/reopen this
   // channel on every character typed — see useStableCallback.
-  const stableLoad = useStableCallback(load);
+  const stableLoad = useStableCallback(() => load(true));
   useEffect(() => adminRepository.subscribeToAdminCatalogue(stableLoad), [stableLoad]);
-  useRefetchOnForeground(load);
+  useRefetchOnForeground(stableLoad);
 
   const toggleActive = async (product: any) => {
     const next = !product.is_active;
@@ -76,35 +86,43 @@ export default function AdminProductsScreen() {
     }
   };
 
-  return (
-    <AdminShell title="Products" subtitle="Manage your product catalogue">
+  // Stats and search are the first rows of the list (not a fixed block above it), so the whole screen scrolls and the list gets
+  // all the remaining height. Passed as an element so the search box keeps focus while typing.
+  const header = (
+    <View style={styles.header}>
       {stats && (
         <View style={styles.statsRow}>
-          <StatCard label="Total Products" value={stats.total} icon={Package} />
-          <StatCard label="Active" value={stats.active} icon={Boxes} tone="success" />
-          <StatCard label="Archived" value={stats.total - stats.active} icon={Boxes} />
-          <StatCard label="Categories" value={stats.categories} icon={Tag} onPress={() => router.push('/admin/categories' as never)} />
+          <StatCard compact label="Total Products" value={stats.total} icon={Package} />
+          <StatCard compact label="Active" value={stats.active} icon={Boxes} tone="success" />
+          <StatCard compact label="Archived" value={stats.total - stats.active} icon={Boxes} />
+          <StatCard compact label="Categories" value={stats.categories} icon={Tag} onPress={() => router.push('/admin/categories' as never)} />
         </View>
       )}
-
       <View style={styles.toolbar}>
         <View style={styles.searchBox}>
           <Search size={ICON_SIZE.sm} color={colors.textMuted} strokeWidth={ICON_STROKE} />
-          <TextInput style={styles.searchInput} placeholder="Search products by name or SKU" placeholderTextColor={colors.textMuted} value={search} onChangeText={setSearch} onSubmitEditing={load} returnKeyType="search" />
+          <TextInput style={styles.searchInput} placeholder="Search products by name or SKU" placeholderTextColor={colors.textMuted} value={searchInput} onChangeText={setSearchInput} returnKeyType="search" autoCorrect={false} accessibilityLabel="Search products" />
         </View>
         {hasPermission('products.create') && (
-          <Pressable style={styles.addBtn} onPress={() => router.push('/admin/products/new' as never)}>
+          <Pressable style={styles.addBtn} onPress={() => router.push('/admin/products/new' as never)} accessibilityRole="button">
             <Plus size={ICON_SIZE.sm} color={colors.white} strokeWidth={ICON_STROKE} />
             <Text style={styles.addBtnText}>Add Product</Text>
           </Pressable>
         )}
       </View>
+    </View>
+  );
 
+  return (
+    <AdminShell title="Products" subtitle="Manage your product catalogue">
       <FlatList
-        style={{ flex: 1 }}
+        style={styles.list}
         data={products}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={header}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshing={loading}
         onRefresh={load}
         onEndReachedThreshold={0.4}
@@ -148,13 +166,15 @@ export default function AdminProductsScreen() {
 }
 
 const styles = StyleSheet.create({
-  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, padding: spacing.lg, paddingBottom: 0, maxWidth: 1200, width: '100%', alignSelf: 'center' },
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.lg, maxWidth: 1200, width: '100%', alignSelf: 'center' },
+  list: { flex: 1, minHeight: 0 },
+  header: { gap: spacing.sm, paddingBottom: spacing.xs },
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44 },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44 },
   addBtnText: { ...textStyles.caption, color: colors.white, fontFamily: 'PlusJakartaSans_700Bold' },
   searchInput: { flex: 1, ...textStyles.bodySmall, color: colors.textPrimary, outlineStyle: 'none' as never },
-  listContent: { padding: spacing.lg, paddingTop: 0, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
+  listContent: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md,
     borderWidth: 1, borderColor: colors.border, ...shadows.xs,

@@ -1,7 +1,7 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Camera, CheckCircle2, Mail, MapPin, Phone, Star, Trash2, Truck, XCircle } from 'lucide-react-native';
+import { ArrowLeft, Camera, CheckCircle2, Mail, MapPin, Pencil, Phone, Star, Trash2, Truck, XCircle } from 'lucide-react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../../theme/icons';
 import { AdminShell } from '../../../components/admin/AdminShell';
@@ -15,6 +15,8 @@ import { useAdminStore } from '../../../store/adminStore';
 import { useUIStore } from '../../../store/uiStore';
 import { adminRepository } from '../../../services/repositories/adminRepository';
 import { pickRiderAvatar, uploadRiderAvatar, deleteRiderAvatar, AvatarUploadError } from '../../../services/storage/riderAvatar';
+import { ChoiceChips, EditField, EditSheet } from '../../../components/admin/EditSheet';
+import { VEHICLE_TYPES, validateRiderForm, type RiderFormErrors } from '../../../services/riderEdit';
 
 export default function AdminRiderProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,6 +26,7 @@ export default function AdminRiderProfileScreen() {
   const [currentDelivery, setCurrentDelivery] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [editing, setEditing] = useState(false);
   const hasPermission = useAdminStore((s) => s.hasPermission);
   const showToast = useUIStore((s) => s.showToast);
   const canManage = hasPermission('riders.manage');
@@ -56,9 +59,11 @@ export default function AdminRiderProfileScreen() {
     try {
       await adminRepository.setRiderActive(rider.id, next);
       showToast(next ? 'Rider activated' : 'Rider deactivated', 'success');
-    } catch {
+      load();
+    } catch (e) {
       setRider((prev: any) => ({ ...prev, is_active: !next }));
-      showToast("Couldn't update the rider.", 'error');
+      // The server's own reason, e.g. "this rider has a delivery in progress — finish or cancel it first".
+      showToast(e instanceof Error ? e.message : "Couldn't update the rider.", 'error');
     }
   };
 
@@ -179,6 +184,12 @@ export default function AdminRiderProfileScreen() {
               <Text style={styles.mutedText}>Joined {new Date(rider.profiles.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
             )}
             {canManage && (
+              <Pressable style={styles.editBtn} onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel="Edit rider details">
+                <Pencil size={ICON_SIZE.xs} color={colors.primary} strokeWidth={ICON_STROKE} />
+                <Text style={styles.editBtnText}>Edit details</Text>
+              </Pressable>
+            )}
+            {canManage && (
               <View style={styles.activeToggleRow}>
                 <Text style={styles.plainText}>Active</Text>
                 <Switch value={rider.is_active} onValueChange={toggleActive} trackColor={{ false: colors.border, true: colors.primary }} thumbColor={colors.white} />
@@ -223,7 +234,77 @@ export default function AdminRiderProfileScreen() {
           />
         )}
       </ScrollView>
+
+      {editing && (
+        <RiderEditor
+          rider={rider}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            load();
+          }}
+        />
+      )}
     </AdminShell>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function RiderEditor({ rider, onClose, onSaved }: { rider: any; onClose: () => void; onSaved: () => void }) {
+  const showToast = useUIStore((s) => s.showToast);
+  const current = {
+    fullName: (rider.profiles?.full_name ?? '') as string,
+    vehicleType: (rider.vehicle_type ?? '') as string,
+    vehicleNumber: (rider.vehicle_number ?? '') as string,
+    primaryStoreId: (rider.primary_store_id ?? null) as string | null,
+    maxActive: (rider.max_active_deliveries ?? 1) as number,
+  };
+  const [fullName, setFullName] = useState(current.fullName);
+  const [vehicleType, setVehicleType] = useState(current.vehicleType);
+  const [vehicleNumber, setVehicleNumber] = useState(current.vehicleNumber);
+  const [primaryStoreId, setPrimaryStoreId] = useState<string | null>(current.primaryStoreId);
+  const [maxActive, setMaxActive] = useState(String(current.maxActive));
+  const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
+  const [errors, setErrors] = useState<RiderFormErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    adminRepository.getStores().then((rows) => setStores(rows.filter((s: { is_active: boolean }) => s.is_active))).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    const { errors: found, patch } = validateRiderForm({ fullName, vehicleType, vehicleNumber, primaryStoreId, maxActive }, current);
+    setErrors(found);
+    setFormError(null);
+    if (Object.keys(found).length > 0) return;
+    if (Object.keys(patch).length === 0) {
+      showToast('Nothing was changed.', 'info');
+      onClose();
+      return;
+    }
+    setSaving(true);
+    try {
+      await adminRepository.updateRider(rider.id, patch);
+      showToast('Rider updated.', 'success');
+      onSaved();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Couldn't save the rider. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <EditSheet title="Edit rider details" onClose={onClose} onSave={save} saving={saving} error={formError}>
+      <EditField label="Full name" value={fullName} onChangeText={setFullName} error={errors.fullName} maxLength={60} />
+      <ChoiceChips label="Vehicle" options={VEHICLE_TYPES.map((v) => ({ value: v, label: v }))} value={VEHICLE_TYPES.find((v) => v === vehicleType.trim().toLowerCase()) ?? null} onChange={setVehicleType} />
+      <EditField label="Vehicle type (or type your own)" value={vehicleType} onChangeText={setVehicleType} error={errors.vehicleType} autoCapitalize="none" maxLength={30} />
+      <EditField label="Vehicle number" value={vehicleNumber} onChangeText={setVehicleNumber} error={errors.vehicleNumber} autoCapitalize="characters" maxLength={20} placeholder="UP80 AB 1234" />
+      <ChoiceChips label="Home store" options={stores.map((s) => ({ value: s.id, label: s.name.replace('Govind Pansari — ', '') }))} value={primaryStoreId} onChange={setPrimaryStoreId} error={errors.primaryStoreId} />
+      <EditField label="Deliveries at once" value={maxActive} onChangeText={setMaxActive} error={errors.maxActive} keyboardType="number-pad" maxLength={2} hint="How many orders this rider can carry together (1 to 10)." />
+      <Text style={styles.editNote}>Their phone number is their sign-in and can't be changed here. A rider with a delivery in progress can't be moved to another store or switched off.</Text>
+    </EditSheet>
   );
 }
 
@@ -262,6 +343,9 @@ const styles = StyleSheet.create({
   plainText: { ...textStyles.bodySmall, color: colors.textPrimary },
   mutedText: { ...textStyles.caption, color: colors.textSecondary, marginTop: 2 },
   activeToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider },
+  editBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, marginTop: spacing.md, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.primaryTint },
+  editBtnText: { ...textStyles.caption, color: colors.primary, fontFamily: 'PlusJakartaSans_700Bold' },
+  editNote: { ...textStyles.caption, color: colors.textMuted, marginTop: spacing.sm, lineHeight: 17 },
   sectionLabel: { ...textStyles.cardTitle, fontSize: 13, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginTop: spacing.sm },
   historyRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md,

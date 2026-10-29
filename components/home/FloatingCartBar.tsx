@@ -21,7 +21,7 @@ const TIER_SCALE = [1, 1.08, 1.16] as const;
 const TIER_RING_OPACITY = [0, 0.22, 0.4] as const;
 
 export function FloatingCartBar() {
-  const { totalCount, itemTotal, amountToFreeDelivery, savings } = useCartLines();
+  const { totalCount, itemTotal, amountToFreeDelivery, hasFreeDelivery, savings } = useCartLines();
   const pulseTrigger = useCartFlyStore((s) => s.pulseTrigger);
   const bagScale = useSharedValue(1);
   const tier = tierFor(totalCount);
@@ -62,11 +62,13 @@ export function FloatingCartBar() {
             {totalCount} {totalCount === 1 ? 'item' : 'items'} • {formatINR(itemTotal)}
           </Text>
           <Text style={styles.subtext} numberOfLines={1}>
-            {amountToFreeDelivery > 0
+            {hasFreeDelivery && amountToFreeDelivery > 0
               ? `Add ${formatINR(amountToFreeDelivery)} more for FREE delivery`
               : savings > 0
                 ? `You saved ${formatINR(savings)}`
-                : 'Free delivery unlocked'}
+                : hasFreeDelivery
+                  ? 'Free delivery unlocked'
+                  : 'Ready to checkout'}
           </Text>
         </View>
         <View style={styles.cta}>

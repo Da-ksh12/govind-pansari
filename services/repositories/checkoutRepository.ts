@@ -1,5 +1,6 @@
 import { supabase } from '../supabase/client';
 import { toCatalogueError } from '../supabase/errors';
+import { PaymentVerificationUnavailableError } from '../payments/razorpayCheckout.types';
 
 export interface CheckoutSummaryItem {
   cartItemId: string;
@@ -27,7 +28,12 @@ export type CheckoutErrorCode =
   | 'CART_EMPTY'
   | 'ADDRESS_NOT_FOUND'
   | 'PRODUCT_UNAVAILABLE'
+  // Serviceability reasons — the same codes (and wording, via services/serviceability) as the address screens.
   | 'OUTSIDE_SERVICE_AREA'
+  | 'STORE_CLOSED'
+  | 'STORES_NOT_ACCEPTING_ORDERS'
+  | 'NO_ACTIVE_STORES'
+  | 'INVALID_COORDINATES'
   | 'CART_NOT_FULFILLABLE'
   | 'BELOW_MINIMUM_ORDER'
   | 'OUT_OF_STOCK'
@@ -40,6 +46,11 @@ export interface CheckoutFailure {
   unavailableItems?: string[];
   minimumOrderValue?: number;
   amountToMinimumOrder?: number;
+  /** Present for the serviceability reasons. */
+  opensAt?: string;
+  closesAt?: string;
+  maxRadiusKm?: number;
+  nearestStore?: { storeId: string; storeName: string; distanceMeters: number };
 }
 
 export interface CheckoutSummarySuccess {
@@ -137,7 +148,24 @@ export const checkoutRepository = {
         razorpay_signature: params.razorpaySignature,
       },
     });
-    if (error) throw new Error(error.message || "We couldn't confirm your payment. Please contact support if you were charged.");
+    if (error) {
+      // Tell a definitive server answer apart from "we never got an answer":
+      //  * 4xx — the server looked at this payment and refused it (signature
+      //    mismatch, wrong order) or found it already confirmed (409 "already
+      //    paid", e.g. the webhook got there first). Both are real outcomes.
+      //  * anything else (network failure, 5xx) — unknown. The money may have
+      //    been taken, so this must NOT read as a failed payment.
+      const response = (error as { context?: Response }).context;
+      const status = typeof response?.status === 'number' ? response.status : undefined;
+      if (status !== undefined && status >= 400 && status < 500) {
+        if (status === 409) {
+          const detail = await response?.clone().json().catch(() => null);
+          if (typeof detail?.error === 'string' && /already paid/i.test(detail.error)) return { success: true };
+        }
+        return { success: false };
+      }
+      throw new PaymentVerificationUnavailableError();
+    }
     return data as { success: boolean };
   },
 };

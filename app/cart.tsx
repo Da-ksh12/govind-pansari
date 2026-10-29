@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, ShoppingBag, Tag, Trash2 } from 'lucide-react-native';
@@ -12,7 +12,7 @@ import { FreeDeliveryProgress } from '../components/cart/FreeDeliveryProgress';
 import { CategoryRail } from '../components/home/CategoryRail';
 import { ProductRail } from '../components/product/ProductRail';
 import { formatINR } from '../components/ui/PriceBlock';
-import { useCartLines, FREE_DELIVERY_THRESHOLD } from '../hooks/useCartLines';
+import { useCartLines } from '../hooks/useCartLines';
 import { useCartStore } from '../store/cartStore';
 import { productRepository } from '../services/repositories/productRepository';
 import { categoryRepository } from '../services/repositories/categoryRepository';
@@ -26,7 +26,7 @@ export default function CartScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
   const insets = useSafeAreaInsets();
-  const { lines, savedLines, itemTotal, mrpTotal, deliveryFee, amountToFreeDelivery, freeDeliveryProgress, savings, totalCount } =
+  const { lines, savedLines, itemTotal, mrpTotal, deliveryFee, amountToFreeDelivery, freeDeliveryProgress, hasFreeDelivery, savings, totalCount } =
     useCartLines();
   const clearCart = useCartStore((s) => s.clear);
 
@@ -38,21 +38,27 @@ export default function CartScreen() {
   // price drift on its own, so this is the one place that asks the
   // server "is this still accurate" rather than trusting local state.
   const [enrichment, setEnrichment] = useState<Map<string, EnrichedCartItem> | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Items are on the device but their details (names, prices) are not loaded yet — a fresh start or a slow network.
+  // That is "loading", never "empty".
+  const storedLineCount = useCartStore((s) => s.items.filter((i) => !i.savedForLater).length);
+  const loadCart = useCallback(() => {
+    setLoadFailed(false);
+    cartRepository
+      .list()
+      .then((items) => {
+        setEnrichment(new Map(items.map((i) => [i.variantId, i])));
+        useCartStore.getState().applyServerCart(items);
+      })
+      .catch(() => setLoadFailed(true));
+  }, []);
+  // Reconciles the local store against the real server cart on every focus — the one place that catches a cart the
+  // server emptied out from under us (e.g. a checkout attempt that created-then-cancelled an order) before it can show
+  // a stale item here while Checkout correctly reports CART_EMPTY. A failed read leaves the stored cart as it is.
   useFocusEffect(
     useCallback(() => {
-      cartRepository
-        .list()
-        .then((items) => {
-          setEnrichment(new Map(items.map((i) => [i.variantId, i])));
-          // Reconciles the local store against the real server cart on
-          // every focus — the one place that catches a cart the server
-          // emptied out from under us (e.g. a checkout attempt that
-          // created-then-cancelled an order) before it can show a stale
-          // item here while Checkout correctly reports CART_EMPTY.
-          useCartStore.getState().applyServerCart(items);
-        })
-        .catch(() => {});
-    }, []),
+      loadCart();
+    }, [loadCart]),
   );
 
   const { data: crossSellRaw } = useAsync(async () => {
@@ -74,6 +80,30 @@ export default function CartScreen() {
     return productRepository.listBestsellers();
   }, [totalCount === 0]);
   const emptyCartPopular = useFilteredRecommendations(emptyCartPopularRaw, { limit: 10 });
+
+  if (totalCount === 0 && storedLineCount > 0) {
+    return (
+      <SafeScreen>
+        <CartHeader onClear={undefined} />
+        <View style={styles.pendingCart}>
+          {loadFailed ? (
+            <>
+              <Text style={styles.pendingTitle}>Couldn't load your cart</Text>
+              <Text style={styles.pendingText}>Your items are safe. Check your connection and try again.</Text>
+              <Pressable style={styles.emptyShopBtn} onPress={loadCart}>
+                <Text style={styles.emptyShopBtnText}>Retry</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={styles.pendingText}>Loading your cart…</Text>
+            </>
+          )}
+        </View>
+      </SafeScreen>
+    );
+  }
 
   if (totalCount === 0) {
     return (
@@ -108,7 +138,7 @@ export default function CartScreen() {
 
   const itemsContent = (
     <>
-      <FreeDeliveryProgress progress={freeDeliveryProgress} amountRemaining={amountToFreeDelivery} />
+      {hasFreeDelivery && <FreeDeliveryProgress progress={freeDeliveryProgress} amountRemaining={amountToFreeDelivery} />}
 
       <View style={styles.linesWrap}>
         {lines.map((line) => {
@@ -257,6 +287,9 @@ const styles = StyleSheet.create({
   headerSubtitle: { ...textStyles.caption, color: colors.textSecondary, marginTop: 1 },
   content: { paddingHorizontal: spacing.base, paddingTop: spacing.sm },
   emptyContent: { paddingBottom: spacing.xxl },
+  pendingCart: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingHorizontal: spacing.xl },
+  pendingTitle: { ...textStyles.sectionTitle, fontSize: 18, color: colors.textPrimary, textAlign: 'center' },
+  pendingText: { ...textStyles.body, color: colors.textSecondary, textAlign: 'center' },
   emptyShopBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm,
     backgroundColor: colors.primary, borderRadius: radius.pill, height: 50, marginTop: spacing.xl,

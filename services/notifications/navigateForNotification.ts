@@ -22,6 +22,11 @@ export function navigateForNotification(eventType: NotificationEventType, data: 
   if (LIVE_TRACKING_EVENTS.has(eventType) && data.orderId) return `/track/${data.orderId}`;
   if (RIDER_DELIVERY_EVENTS.has(eventType) && data.deliveryId) return `/rider/delivery/${data.deliveryId}`;
   if (eventType === 'store_new_order' && data.orderId) return `/store/orders/${data.orderId}`;
+  // "Rider didn't accept" / "Rider Not Assigned": the person who must choose again lands where they can do it.
+  if (eventType === 'dispatch_round_expired') {
+    if (data.audience === 'admin') return '/admin/deliveries?tab=needs-rider';
+    if (data.orderId) return `/store/orders/${data.orderId}`;
+  }
   if (eventType.startsWith('admin_') && data.orderId) return `/admin/orders/${data.orderId}`;
   return null;
 }

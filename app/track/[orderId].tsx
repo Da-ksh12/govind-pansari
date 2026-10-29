@@ -15,17 +15,18 @@ import { RiderJourneyStrip, type JourneyStage } from '../../components/tracking/
 import { LiveTrackingMap } from '../../components/tracking/LiveTrackingMap';
 import type { LiveTrackingMapRef, LngLatBoundsTuple } from '../../components/tracking/LiveTrackingMap.types';
 import { useSmoothedHeading, useSmoothedPosition } from '../../hooks/useSmoothedPosition';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { describeFreshness } from '../../services/riderFreshness';
 import { useLiveRoute, formatEta } from '../../hooks/useLiveRoute';
 import { trackingRepository, type DeliveryTracking, type LiveLocation } from '../../services/repositories/trackingRepository';
 import { notificationRepository } from '../../services/repositories/notificationRepository';
 import type { LatLng } from '../../types/models';
 
-// section 44: 60-120s window before a location reading counts as stale.
-const STALE_MS = 90_000;
-// section46: a periodic safety-net refetch so a missed Realtime event (or a
-// silent reconnect) never leaves the screen showing an out-of-date delivery
-// stage indefinitely.
-const SAFETY_REFRESH_MS = 25_000;
+// A periodic safety-net refetch so a missed Realtime event (or a silent
+// reconnect) never leaves the screen showing an out-of-date delivery stage
+// indefinitely. Realtime does the real work; this only bounds the damage.
+// What counts as a stale rider position lives in services/riderFreshness.ts.
+const SAFETY_REFRESH_MS = 30_000;
 
 const DELIVERY_HEADLINE: Record<string, string> = {
   assigned: 'Rider assigned — waiting for pickup',
@@ -118,26 +119,29 @@ export default function TrackOrderScreen() {
   const isFailed = deliveryStatus === 'failed' || deliveryStatus === 'declined' || deliveryStatus === 'expired';
   const isLivePhase = !!tracking?.deliveryId && !isDelivered && !isCancelled && !(isTerminal && isFailed);
 
-  // Realtime subscriptions — only while there's an active delivery leg to
-  // watch, and torn down the moment that stops being true (section 65):
-  // privacy requires tracking to stop, not just the UI to hide it.
+  const isFinished = isDelivered || isCancelled || isFailed;
+
+  // Order-level feed, open from the moment the screen opens until the order is finished: the order row (status,
+  // including 'approaching') and its delivery assignments (a rider gets assigned, accepts, picks up, completes).
+  // This is what lets "Tracking will start soon" turn into the live map by itself once a rider is assigned.
+  // It also refetches after a dropped connection comes back, so a missed event cannot leave the stage stale.
+  // Torn down as soon as the order is finished — privacy requires tracking to stop, not just the UI to hide it.
+  useEffect(() => {
+    if (!orderId || isFinished) return;
+    return trackingRepository.subscribeToOrderTracking(orderId, refetch);
+  }, [orderId, isFinished, refetch]);
+
+  // Rider position pings — only while there is an active delivery leg to watch (section 65).
   useEffect(() => {
     if (!tracking?.deliveryId || !isLivePhase) return;
-    const unsubLocation = trackingRepository.subscribeToLocation(tracking.deliveryId, (loc) => setLiveLocation(loc));
-    const unsubStatus = trackingRepository.subscribeToDeliveryStatus(tracking.deliveryId, (status) => {
-      setDeliveryStatus(status);
-      refetch(); // pick up whatever else changed alongside the status (e.g. deliveredAt)
-    });
-    // orders.status (e.g. 'approaching', from the rider's "I've Reached
-    // Destination") changes independently of delivery_assignments, so it
-    // needs its own feed — see subscribeToOrderStatus's own comment.
-    const unsubOrderStatus = trackingRepository.subscribeToOrderStatus(tracking.orderId, refetch);
+    const unsubLocation = trackingRepository.subscribeToLocation(tracking.deliveryId, (loc) => setLiveLocation(loc), refetch);
+    // Apply the new delivery status immediately; the order-level feed above then reconciles with the server's version.
+    const unsubStatus = trackingRepository.subscribeToDeliveryStatus(tracking.deliveryId, (status) => setDeliveryStatus(status));
     return () => {
       unsubLocation();
       unsubStatus();
-      unsubOrderStatus();
     };
-  }, [tracking?.deliveryId, tracking?.orderId, isLivePhase, refetch]);
+  }, [tracking?.deliveryId, isLivePhase, refetch]);
 
   // section 46: re-sync on app foreground (Realtime sockets suspend in the
   // background) and on a periodic safety-net timer, rather than trusting
@@ -150,21 +154,23 @@ export default function TrackOrderScreen() {
   }, [refetch]);
 
   useEffect(() => {
-    if (!isLivePhase) return;
+    if (isFinished) return;
     const interval = setInterval(refetch, SAFETY_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [isLivePhase, refetch]);
+  }, [isFinished, refetch]);
 
-  // Forces a re-render every 15s purely so the staleness check below
-  // (derived from Date.now() at render time) keeps advancing even when no
-  // new event has arrived to trigger a render on its own.
+  // Forces a re-render every 5s purely so the "updated N s ago" label and the
+  // staleness check below (derived from Date.now() at render time) keep
+  // advancing even when no new event has arrived to trigger a render.
   useEffect(() => {
-    const interval = setInterval(() => forceTick((t) => t + 1), 15_000);
+    const interval = setInterval(() => forceTick((t) => t + 1), 5_000);
     return () => clearInterval(interval);
   }, []);
 
   const hasFreshLocation = deliveryStatus != null && LIVE_LOCATION_STAGES.has(deliveryStatus) && !!liveLocation;
-  const isStale = hasFreshLocation && Date.now() - new Date(liveLocation!.recordedAt).getTime() > STALE_MS;
+  const freshness = hasFreshLocation ? describeFreshness(liveLocation!, Date.now()) : null;
+  const isStale = !!freshness?.stale;
+  const online = useNetworkStatus();
 
   const riderPos: LatLng | null = hasFreshLocation ? { lat: liveLocation!.latitude, lng: liveLocation!.longitude } : null;
   const smoothedRiderPos = useSmoothedPosition(riderPos);
@@ -335,12 +341,17 @@ export default function TrackOrderScreen() {
             <Text style={styles.bannerText}>Waiting for the rider's GPS signal…</Text>
           </View>
         )}
-        {isStale && (
+        {!online && (
           <View style={[styles.banner, { top: insets.top + 60 }]}>
-            <Text style={styles.bannerText}>Updating rider location…</Text>
+            <Text style={styles.bannerText}>You're offline — showing the last known position</Text>
           </View>
         )}
-        {!isStale && liveLocation && routeUnavailable && (
+        {online && isStale && (
+          <View style={[styles.banner, { top: insets.top + 60 }]}>
+            <Text style={styles.bannerText}>Waiting for the rider's next location update…</Text>
+          </View>
+        )}
+        {online && !isStale && liveLocation && routeUnavailable && (
           <View style={[styles.banner, { top: insets.top + 60 }]}>
             <Text style={styles.bannerText}>Route temporarily unavailable</Text>
           </View>
@@ -355,6 +366,8 @@ export default function TrackOrderScreen() {
             headline={headline}
             etaLabel={etaLabel}
             distanceLabel={distanceLabel}
+            locationNote={freshness ? `${freshness.label}${freshness.accuracyLabel ? ` · ${freshness.accuracyLabel}` : ''}${freshness.approximate ? ' · approximate' : ''}` : null}
+            locationNoteWarn={!!freshness && (freshness.stale || freshness.approximate)}
           />
 
           <View style={styles.journeyCard}>

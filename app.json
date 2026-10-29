@@ -25,7 +25,7 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
-      "versionCode": 10
+      "versionCode": 16
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -64,7 +64,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Govind Pansari uses your photo library to let store admins upload product photos.",
-          "cameraPermission": "Govind Pansari uses your camera so riders can capture a photo proof of delivery."
+          "cameraPermission": "Govind Pansari uses your camera so store admins can photograph products and riders can capture a photo proof of delivery."
         }
       ],
       "@sentry/react-native/expo",

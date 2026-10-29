@@ -9,10 +9,15 @@ import { useAuthStore } from '../store/authStore';
 import { useLocationStore } from '../store/locationStore';
 import { authService, AuthFlowError } from '../services/supabase/authService';
 import { formatPhoneDisplay } from '../services/phone';
+import { routeAfterSignIn } from '../services/startupRoute';
+import { sanitizeOtpInput } from '../services/otpExtract';
+import { listenForSmsCode, smsAutoReadAvailable } from '../services/smsAutoRead';
 import { bannerImg } from '../data/images';
 
 const OTP_LENGTH = 6;
-const RESEND_SECONDS = 30;
+// Supabase Auth refuses a new code for the same number within 60 seconds (sms_max_frequency),
+// so the Resend button must not become active any earlier.
+const RESEND_SECONDS = 60;
 const WIDE_BREAKPOINT = 900;
 
 export default function OtpScreen() {
@@ -39,6 +44,17 @@ export default function OtpScreen() {
     return () => clearTimeout(t);
   }, [seconds]);
 
+  // Auto-read the code from the SMS (Android: Google's one-tap "allow this app to read this message?" screen, no SMS permission).
+  // Listens while this screen is open and again after each Resend; stops when it closes. Entering the 6th digit signs in (below).
+  const [smsListenRound, setSmsListenRound] = useState(0);
+  useEffect(() => {
+    if (identifierKind !== 'phone') return;
+    return listenForSmsCode((code) => {
+      setError(null);
+      setOtp(code);
+    }, OTP_LENGTH);
+  }, [identifierKind, smsListenRound]);
+
   useEffect(() => {
     if (otp.length !== OTP_LENGTH || verifying) return;
     if (!pendingIdentifier) return;
@@ -56,24 +72,18 @@ export default function OtpScreen() {
         // session, but fires asynchronously — explicitly wait for the
         // profile here so the role-based destination below (store
         // staff vs. customer) isn't decided on stale/null role data.
-        await useAuthStore.getState().refreshProfile();
-        if (cancelled) return;
-        const freshProfile = useAuthStore.getState().profile;
-        const role = freshProfile?.role;
-        if (role === 'store_manager' || role === 'staff') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see app/index.tsx
-          router.replace('/store' as any);
-        } else if (role === 'rider') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          router.replace('/rider' as any);
-        } else if (role === 'admin') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          router.replace('/admin' as any);
-        } else if (!freshProfile?.hasName) {
-          router.replace('/welcome' as never);
-        } else {
-          router.replace(selectedLocation ? '/(tabs)' : '/location');
+        // The code WAS accepted, so a profile that cannot be read right now (weak connection) is not a wrong code: it goes to the
+        // start screen, which offers a retry, instead of the "didn't work" message — and never to the name form.
+        let profileLoaded = true;
+        try {
+          await useAuthStore.getState().refreshProfile();
+        } catch {
+          profileLoaded = false;
         }
+        if (cancelled) return;
+        const decision = routeAfterSignIn(profileLoaded ? useAuthStore.getState().profile : null, !!selectedLocation);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see app/index.tsx
+        router.replace((decision.kind === 'go' ? decision.route : '/') as any);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -104,6 +114,7 @@ export default function OtpScreen() {
       if (identifierKind === 'phone') await authService.requestOtp(pendingIdentifier);
       else await authService.requestEmailOtp(pendingIdentifier);
       setSeconds(RESEND_SECONDS);
+      setSmsListenRound((round) => round + 1);
     } catch (e) {
       setError(e instanceof AuthFlowError ? e.message : "Couldn't resend the code. Please try again.");
     } finally {
@@ -136,16 +147,24 @@ export default function OtpScreen() {
         value={otp}
         onChangeText={(t) => {
           setError(null);
-          setOtp(t.replace(/[^0-9]/g, '').slice(0, OTP_LENGTH));
+          setOtp(sanitizeOtpInput(t, OTP_LENGTH));
         }}
         keyboardType="number-pad"
-        maxLength={OTP_LENGTH}
         autoFocus
         editable={!verifying}
         textContentType="oneTimeCode"
         autoComplete="sms-otp"
+        importantForAutofill="yes"
         style={styles.hiddenInput}
       />
+
+      {identifierKind === 'phone' && (
+        <Text style={styles.autoReadHint}>
+          {smsAutoReadAvailable
+            ? 'We\'ll fill the code in when the SMS arrives — tap Allow when your phone asks. You can also type it.'
+            : 'Tap the code your keyboard suggests when the SMS arrives, or type it.'}
+        </Text>
+      )}
 
       {verifying && (
         <View style={styles.verifyingRow}>
@@ -157,7 +176,7 @@ export default function OtpScreen() {
 
       <View style={styles.resendRow}>
         {seconds > 0 ? (
-          <Text style={styles.resendMuted}>Resend OTP in 0:{seconds.toString().padStart(2, '0')}</Text>
+          <Text style={styles.resendMuted}>Resend OTP in {Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')}</Text>
         ) : resending ? (
           <ActivityIndicator color={colors.primary} size="small" />
         ) : (
@@ -231,6 +250,7 @@ const styles = StyleSheet.create({
   boxError: { borderColor: colors.error },
   boxText: { fontFamily: 'PlusJakartaSans_700Bold', fontSize: 20, color: colors.textPrimary },
   hiddenInput: { position: 'absolute', opacity: 0, height: 1, width: 1 },
+  autoReadHint: { ...textStyles.bodySmall, color: colors.textMuted, marginTop: spacing.md, lineHeight: 18 },
   verifyingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
   verifyingText: { ...textStyles.bodySmall, color: colors.textSecondary },
   errorText: { ...textStyles.bodySmall, color: colors.error, marginTop: spacing.md },

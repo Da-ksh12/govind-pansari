@@ -194,7 +194,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   content: { paddingHorizontal: spacing.base, paddingTop: spacing.md },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 26, color: colors.textPrimary },
+  title: { ...textStyles.screenTitle, color: colors.textPrimary },
   headerIcons: { flexDirection: 'row', gap: spacing.lg },
   userCard: {
     flexDirection: 'row',

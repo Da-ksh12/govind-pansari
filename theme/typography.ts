@@ -21,28 +21,34 @@ export const fontFamily = {
   bodyExtrabold: 'PlusJakartaSans_800ExtraBold',
 } as const;
 
+/**
+ * Scale tuned for a calmer, more premium read: every tier above `xs` sits
+ * 1-2pt below the previous scale, `xs` stays at 11 as the legibility floor
+ * (nav labels, captions, badges), and each line height keeps ~1.35-1.4x the
+ * size (Plus Jakarta Sans has tall ascenders; tighter clips on Android).
+ */
 export const fontSize = {
   xs: 11,
-  sm: 13,
-  base: 15,
-  md: 17,
-  lg: 19,
-  xl: 22,
-  xxl: 26,
-  display: 32,
-  displayLg: 38,
+  sm: 12,
+  base: 14,
+  md: 16,
+  lg: 18,
+  xl: 20,
+  xxl: 24,
+  display: 30,
+  displayLg: 36,
 } as const;
 
 export const lineHeight = {
   xs: 14,
-  sm: 18,
-  base: 21,
-  md: 24,
-  lg: 26,
-  xl: 28,
-  xxl: 32,
-  display: 38,
-  displayLg: 44,
+  sm: 17,
+  base: 20,
+  md: 23,
+  lg: 25,
+  xl: 27,
+  xxl: 30,
+  display: 36,
+  displayLg: 42,
 } as const;
 
 /**

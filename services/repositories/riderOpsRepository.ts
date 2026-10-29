@@ -1,4 +1,5 @@
-import { supabase, uniqueChannel } from '../supabase/client';
+import { supabase } from '../supabase/client';
+import { liveFeed } from '../realtime/liveFeed';
 import { toCatalogueError } from '../supabase/errors';
 import { getDeliveryProofPhotoUrl } from '../storage/deliveryProof';
 
@@ -21,6 +22,10 @@ export interface CurrentAssignment {
   storeLongitude: number;
   deliveryCity: string;
   deliveryAddressLine1: string;
+  /** Area / locality, landmark and the customer's delivery instructions (only present on the full delivery detail, not the dashboard summary). */
+  deliveryAddressLine2?: string;
+  deliveryLandmark?: string;
+  deliveryInstructions?: string;
   deliveryLatitude: number | null;
   deliveryLongitude: number | null;
   recipientName: string;
@@ -65,6 +70,9 @@ function mapAssignment(row: any): CurrentAssignment | null {
     storeLongitude: row.stores.longitude,
     deliveryCity: row.orders.delivery_address?.city ?? '',
     deliveryAddressLine1: row.orders.delivery_address?.address_line_1 ?? '',
+    deliveryAddressLine2: row.orders.delivery_address?.address_line_2 ?? undefined,
+    deliveryLandmark: row.orders.delivery_address?.landmark ?? undefined,
+    deliveryInstructions: row.orders.delivery_address?.delivery_instructions ?? undefined,
     deliveryLatitude: row.orders.delivery_address?.latitude ?? null,
     deliveryLongitude: row.orders.delivery_address?.longitude ?? null,
     recipientName: row.orders.delivery_address?.recipient_name ?? '',
@@ -134,10 +142,7 @@ export const riderOpsRepository = {
    * scoped to this rider's own assignments only.
    */
   subscribeToRiderActivity(riderId: string, onChange: () => void): () => void {
-    const channel = uniqueChannel(`rider-activity-${riderId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'delivery_assignments', filter: `rider_id=eq.${riderId}` }, onChange)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
+    return liveFeed.watch([{ table: 'delivery_assignments', filter: `rider_id=eq.${riderId}` }], onChange);
   },
 
   /** Rejected server-side unless the rider currently has a delivery in an eligible stage (section 6/7) — see submit_rider_location(). */
@@ -284,10 +289,7 @@ export const riderOpsRepository = {
 
   /** Live "did I just lose this offer to someone else" signal (section 15) — the rider's own row flips OPEN -> LOST/EXPIRED the instant another rider wins or the round times out; RLS already scopes delivery_offers to the rider's own rows. */
   subscribeToOffer(offerId: string, onChange: () => void): () => void {
-    const channel = uniqueChannel(`delivery-offer-${offerId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'delivery_offers', filter: `id=eq.${offerId}` }, onChange)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
+    return liveFeed.watch([{ table: 'delivery_offers', event: 'UPDATE', filter: `id=eq.${offerId}` }], onChange, { catchUpOnConnect: true });
   },
   async markArrivedAtStore(assignmentId: string) {
     const { error } = await supabase.rpc('mark_arrived_at_store', { p_assignment_id: assignmentId });

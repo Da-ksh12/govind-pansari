@@ -83,6 +83,15 @@ def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 apply from: new File(["node", "--print", "require('path').dirname(require.resolve('@sentry/react-native/package.json'))"].execute().text.trim(), "sentry.gradle")
 
+// The upload keystore named by GP_UPLOAD_STORE_FILE. A RELATIVE path is read from the project folder (the one holding credentials.json, which is how
+// EAS writes it, e.g. credentials/android/keystore.jks) — not from android/app, where Gradle's file() would otherwise start and never find it.
+// Quotes and spaces left around a pasted value are ignored.
+def gpResolveKeystore(String raw) {
+    def cleaned = raw.trim().replaceAll('^["\']|["\']$', '')
+    def candidate = new File(cleaned)
+    return candidate.isAbsolute() ? candidate : new File(rootProject.projectDir.parentFile, cleaned)
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
 
@@ -94,8 +103,10 @@ android {
         applicationId 'com.govindpansari.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
+        versionCode 16
         versionName "1.0.0"
+        // Maps SDK for Android key, injected into the manifest at build time and never committed.
+        manifestPlaceholders = [GOOGLE_MAPS_ANDROID_API_KEY: (System.getenv('GOOGLE_MAPS_ANDROID_API_KEY') ?: project.findProperty('GOOGLE_MAPS_ANDROID_API_KEY') ?: '').toString()]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -111,7 +122,7 @@ android {
             def gpValue = { String name -> System.getenv(name) ?: project.findProperty(name)?.toString() }
             def gpStore = gpValue('GP_UPLOAD_STORE_FILE')
             if (gpStore) {
-                storeFile file(gpStore)
+                storeFile gpResolveKeystore(gpStore)
                 storePassword gpValue('GP_UPLOAD_STORE_PASSWORD')
                 keyAlias gpValue('GP_UPLOAD_KEY_ALIAS')
                 keyPassword gpValue('GP_UPLOAD_KEY_PASSWORD')
@@ -194,6 +205,18 @@ dependencies {
     }
 }
 
+// com.razorpay:checkout 1.6.41 (react-native-razorpay) declares standard-core as "LATEST", a floating version: every build whose
+// cache entry has expired must ask Maven Central which version is newest, and one dropped connection fails the whole build with
+// "Could not resolve com.razorpay:standard-core:latest.integration". It also means a new Razorpay release silently changes the
+// payment SDK inside a release APK. Pinned to the version the recent APKs were built with; raise it on purpose, then re-test payments.
+configurations.configureEach {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'com.razorpay' && details.requested.name == 'standard-core') {
+            details.useVersion '1.7.20'
+        }
+    }
+}
+
 
 // Release tasks must never fall back to the debug key: stop early, naming only the missing variables.
 gradle.taskGraph.whenReady { graph ->
@@ -208,8 +231,9 @@ gradle.taskGraph.whenReady { graph ->
             throw new GradleException("Release signing is not configured. Missing: ${missing.join(', ')}")
         }
         def storePath = System.getenv('GP_UPLOAD_STORE_FILE') ?: project.findProperty('GP_UPLOAD_STORE_FILE').toString()
-        if (!file(storePath).exists()) {
-            throw new GradleException("GP_UPLOAD_STORE_FILE does not point to an existing keystore file.")
+        def storeFileResolved = gpResolveKeystore(storePath)
+        if (!storeFileResolved.exists()) {
+            throw new GradleException("GP_UPLOAD_STORE_FILE does not point to an existing keystore file. Looked for: ${storeFileResolved.absolutePath} (value given: ${storePath})")
         }
     }
 }

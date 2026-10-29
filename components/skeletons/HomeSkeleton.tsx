@@ -3,17 +3,20 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { radius, spacing } from '../../theme';
 import { Skeleton } from '../ui/Skeleton';
 
-export function HomeSkeleton() {
+/** `showHeader={false}` when the real header (location + cart + bell) is already on screen above the skeleton. */
+export function HomeSkeleton({ showHeader = true }: { showHeader?: boolean }) {
   return (
     <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      <View style={styles.headerRow}>
-        <Skeleton width={36} height={36} borderRadius={18} />
-        <View style={{ flex: 1, gap: 6 }}>
-          <Skeleton width={100} height={10} />
-          <Skeleton width={160} height={14} />
+      {showHeader && (
+        <View style={styles.headerRow}>
+          <Skeleton width={36} height={36} borderRadius={18} />
+          <View style={{ flex: 1, gap: 6 }}>
+            <Skeleton width={100} height={10} />
+            <Skeleton width={160} height={14} />
+          </View>
+          <Skeleton width={40} height={40} borderRadius={20} />
         </View>
-        <Skeleton width={40} height={40} borderRadius={20} />
-      </View>
+      )}
       <Skeleton height={48} borderRadius={radius.pill} style={{ marginTop: spacing.md }} />
       <Skeleton height={190} borderRadius={radius.lg} style={{ marginTop: spacing.lg }} />
       <View style={styles.circleRow}>

@@ -14,7 +14,8 @@ const METHODS: { key: PaymentInfo['method']; label: string; icon: typeof Smartph
 ];
 
 interface PaymentMethodRowProps {
-  selected: PaymentInfo['method'];
+  /** null = the customer has not chosen yet; no option is highlighted. */
+  selected: PaymentInfo['method'] | null;
   onSelect: (method: PaymentInfo['method']) => void;
   /** Methods rendered greyed-out and unselectable — e.g. gateway methods before Phase 06 wires up a real payment provider. */
   disabledKeys?: PaymentInfo['method'][];

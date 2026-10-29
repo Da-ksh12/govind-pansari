@@ -2,12 +2,16 @@ import * as Location from 'expo-location';
 import type { LatLng } from '../../types/models';
 
 export interface GeocodeResult {
-  /** Short display label, e.g. "Sanjay Place, Agra". */
+  /** Short display label, e.g. "Vijay Nagar Colony, Agra". */
   label: string;
   addressLine: string;
   city?: string;
   state?: string;
   postalCode?: string;
+  /** The road name only (never a house number — a device geocoder's number is a guess), when the device reports one. */
+  street?: string;
+  /** Neighbourhood / area, when the device reports one. */
+  locality?: string;
   /** Set only when this came from a named-place search result (a
    * building/business/landmark), not a plain reverse-geocode of a
    * dropped pin — lets the caller prefer the real place name over a
@@ -47,6 +51,8 @@ export const geocodingService: GeocodingService = {
         city,
         state: first.region ?? undefined,
         postalCode: first.postalCode ?? undefined,
+        street: first.street ?? undefined,
+        locality: first.district ?? undefined,
       };
     } catch {
       // Device geocoder is unavailable on some platforms/emulators —

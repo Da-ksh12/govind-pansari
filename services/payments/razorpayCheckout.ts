@@ -1,6 +1,7 @@
 import RazorpayCheckout from 'react-native-razorpay';
 import { colors } from '../../theme';
-import { RazorpayCheckoutCancelledError, type RazorpayCheckoutParams, type RazorpayCheckoutResult } from './razorpayCheckout.types';
+import { RazorpayCheckoutCancelledError, RazorpayCheckoutFailedError, type RazorpayCheckoutParams, type RazorpayCheckoutResult } from './razorpayCheckout.types';
+import { classifyPaymentFailure } from './paymentErrors';
 
 /** Real native Razorpay Checkout — iOS/Android only (see razorpayCheckout.web.ts for the browser Checkout.js counterpart). */
 export async function openRazorpayCheckout(params: RazorpayCheckoutParams): Promise<RazorpayCheckoutResult> {
@@ -20,7 +21,7 @@ export async function openRazorpayCheckout(params: RazorpayCheckoutParams): Prom
       theme: { color: colors.primary },
     });
     if (!result.razorpay_order_id || !result.razorpay_signature) {
-      throw new Error('Payment completed but the gateway response was incomplete.');
+      throw new RazorpayCheckoutFailedError({ description: 'incomplete gateway response' });
     }
     return {
       razorpayOrderId: result.razorpay_order_id,
@@ -28,14 +29,16 @@ export async function openRazorpayCheckout(params: RazorpayCheckoutParams): Prom
       razorpaySignature: result.razorpay_signature,
     };
   } catch (e: unknown) {
+    if (e instanceof RazorpayCheckoutFailedError) throw e;
     // RazorpayCheckout.open() rejects with a PaymentErrorData object
-    // (code/description/reason), not an Error. The SDK's own error
-    // codes for "user dismissed the checkout" aren't documented in
-    // the package README, so this matches on the description text
-    // Razorpay's SDK is known to use rather than trusting an
-    // unverified numeric code.
-    const err = e as { code?: number; description?: string } | undefined;
-    if (err?.description?.toLowerCase().includes('cancel')) throw new RazorpayCheckoutCancelledError();
-    throw new Error(err?.description || 'The payment could not be completed. Please try again.');
+    // (code/description/reason) — sometimes with the whole gateway JSON
+    // as `description` — not an Error. Whatever it is stays in `raw`,
+    // where paymentErrors.classifyPaymentFailure turns it into a safe
+    // message; it is never used as user-facing text. The SDK's cancel
+    // codes aren't documented, so cancellation is also recognised there
+    // from the description text rather than from an unverified number.
+    const failure = classifyPaymentFailure(e);
+    if (failure.kind === 'cancelled') throw new RazorpayCheckoutCancelledError();
+    throw new RazorpayCheckoutFailedError(e);
   }
 }

@@ -1,4 +1,5 @@
-import { supabase, uniqueChannel } from '../supabase/client';
+import { supabase } from '../supabase/client';
+import { liveFeed } from '../realtime/liveFeed';
 import { toCatalogueError } from '../supabase/errors';
 import type { NotificationType } from '../../types/models';
 
@@ -126,16 +127,12 @@ export const notificationRepository = {
    * Phase 09's tracking subscriptions — filtered by user_id here only
    * for the client's own routing convenience.
    */
-  subscribe(userId: string, onInsert: (row: AppNotificationRow) => void): () => void {
-    const channel = uniqueChannel(`notifications-${userId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
-        (payload) => onInsert(mapRow(payload.new)),
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
+  subscribe(userId: string, onInsert: (row: AppNotificationRow) => void, onResync?: () => void): () => void {
+    return liveFeed.watchRows(
+      { table: 'notifications', event: 'INSERT', filter: `user_id=eq.${userId}` },
+      (change) => onInsert(mapRow(change.new)),
+      // A notification inserted while the socket was down is never replayed: reload the list and the badge instead.
+      { onResync, resyncOnForeground: true },
+    );
   },
 };

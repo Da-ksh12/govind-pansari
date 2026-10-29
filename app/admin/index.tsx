@@ -18,7 +18,9 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { AnimatedPressable } from '../../components/motion/AnimatedPressable';
 import { formatINR } from '../../components/ui/PriceBlock';
 import { adminRepository, type AdminDashboard, type AdminStorePerformance } from '../../services/repositories/adminRepository';
+import { PIPELINE_STAGES, activeOrderCount, ordersRouteForStage, ordersRouteForView, pipelineCounts } from '../../services/dashboardMetrics';
 import { useRefetchOnForeground } from '../../hooks/useRefetchOnForeground';
+import { useStableCallback } from '../../hooks/useStableCallback';
 import { useAuthStore } from '../../store/authStore';
 
 /** Real day-over-day % change — undefined (no trend shown) rather than a fabricated number when yesterday was zero. */
@@ -32,15 +34,7 @@ function minutesLabel(v: number | null): string {
   return v < 60 ? `${v} min` : `${Math.floor(v / 60)}h ${Math.round(v % 60)}m`;
 }
 
-const PIPELINE_STAGES: { key: string; label: string; statuses: string[] }[] = [
-  { key: 'new', label: 'New', statuses: ['placed'] },
-  { key: 'confirmed', label: 'Confirmed', statuses: ['confirmed'] },
-  { key: 'preparing', label: 'Preparing', statuses: ['preparing', 'picking', 'packing'] },
-  { key: 'ready', label: 'Ready', statuses: ['packed'] },
-  { key: 'rider', label: 'Rider Assigned', statuses: ['rider_assigned'] },
-  { key: 'onway', label: 'On the Way', statuses: ['out_for_delivery', 'approaching'] },
-  { key: 'delivered', label: 'Delivered', statuses: ['delivered'] },
-];
+type SectionKey = 'stores' | 'recentOrders' | 'liveDeliveries';
 
 export default function AdminDashboardScreen() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
@@ -53,17 +47,32 @@ export default function AdminDashboardScreen() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [priorityItems, setPriorityItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // A section whose query failed says so — it must never be shown as an
+  // empty list ("No riders currently out on delivery"), because that makes a
+  // broken query indistinguishable from a quiet day.
+  const [failedSections, setFailedSections] = useState<SectionKey[]>([]);
   const profile = useAuthStore((s) => s.profile);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  // `silent`: a live refresh (realtime event / reconnect / foreground) keeps the dashboard on screen and survives a failed refresh.
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    const failed: SectionKey[] = [];
+    const guarded = <T,>(section: SectionKey, fallback: T) => (e: unknown): T => {
+      // eslint-disable-next-line no-console
+      console.warn(`[admin dashboard] ${section} failed to load:`, e instanceof Error ? e.message : e);
+      failed.push(section);
+      return fallback;
+    };
     Promise.all([
       adminRepository.getDashboard(),
-      adminRepository.getStorePerformance().catch(() => []),
-      adminRepository.getRecentOrdersWithThumbnails(6).catch(() => []),
-      adminRepository.getActiveDeliveries().catch(() => []),
+      adminRepository.getStorePerformance().catch(guarded<AdminStorePerformance[]>('stores', [])),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      adminRepository.getRecentOrdersWithThumbnails(6).catch(guarded<any[]>('recentOrders', [])),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      adminRepository.getActiveDeliveries().catch(guarded<any[]>('liveDeliveries', [])),
       adminRepository.getInventoryStats().catch(() => null),
-      adminRepository.getInventory({ lowStockOnly: true, limit: 4 }).catch(() => []),
+      // The most urgent items first (low stock, fewest left; then out of stock) — not "the first 4 rows by id" (QA TC-29).
+      adminRepository.getInventoryAttention(5).catch(() => []),
     ])
       .then(([d, sp, ro, ld, stats, priority]) => {
         setDashboard(d);
@@ -72,14 +81,20 @@ export default function AdminDashboardScreen() {
         setLiveDeliveries(ld.slice(0, 5));
         setTotalSkus(stats?.totalSkus ?? null);
         setPriorityItems(priority);
+        setFailedSections(failed);
       })
-      .catch(() => setDashboard(null))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!silent) setDashboard(null);
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, []);
 
   useFocusEffect(load);
-  useEffect(() => adminRepository.subscribeToAdminDashboard(load), [load]);
-  useRefetchOnForeground(load);
+  const refreshQuietly = useStableCallback(() => load(true));
+  useEffect(() => adminRepository.subscribeToAdminDashboard(refreshQuietly), [refreshQuietly]);
+  useRefetchOnForeground(refreshQuietly);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -109,7 +124,13 @@ export default function AdminDashboardScreen() {
           tone: 'error' as const,
           text: `${dashboard.operations.unassignedDeliveries} ready order${dashboard.operations.unassignedDeliveries === 1 ? '' : 's'} still needs a rider`,
           cta: 'Assign Rider',
-          onPress: () => pushAdmin('/admin/deliveries'),
+          onPress: () => pushAdmin('/admin/deliveries?tab=needs-rider'),
+        },
+        (dashboard.operations.stuckDeliveries ?? 0) > 0 && {
+          tone: 'warning' as const,
+          text: `${dashboard.operations.stuckDeliveries} order${dashboard.operations.stuckDeliveries === 1 ? ' is' : 's are'} marked on the way but ${dashboard.operations.stuckDeliveries === 1 ? 'has' : 'have'} no active delivery`,
+          cta: 'Review',
+          onPress: () => pushAdmin(ordersRouteForView('stuck_delivery')),
         },
       ].filter((x): x is Exclude<typeof x, false> => !!x)
     : [];
@@ -140,13 +161,13 @@ export default function AdminDashboardScreen() {
             {/* ---------------------------------------------------- KPI grid ---------------------------------------------------- */}
             <View style={styles.grid}>
               <StatCard label="Today's Orders" value={dashboard.today.orders} icon={ShoppingBag} trend={pctChange(dashboard.today.orders, dashboard.yesterday.orders)} onPress={() => pushAdmin('/admin/orders')} />
-              <StatCard label="Today's Revenue" value={formatINR(dashboard.today.revenue)} icon={IndianRupee} trend={pctChange(dashboard.today.revenue, dashboard.yesterday.revenue)} />
+              <StatCard label="Today's Revenue" value={formatINR(dashboard.today.revenue)} icon={IndianRupee} trend={pctChange(dashboard.today.revenue, dashboard.yesterday.revenue)} onPress={() => pushAdmin('/admin/analytics')} />
               <StatCard
                 label="Active Orders"
-                value={dashboard.operations.pendingOrders + dashboard.operations.ordersPreparing + dashboard.operations.ordersReady}
+                value={activeOrderCount(dashboard.operations)}
                 icon={ClipboardList}
                 tone={dashboard.operations.pendingOrders > 0 ? 'warning' : 'default'}
-                onPress={() => pushAdmin('/admin/orders')}
+                onPress={() => pushAdmin(ordersRouteForView('active'))}
               />
               <StatCard label="Deliveries In Progress" value={dashboard.today.activeDeliveries} icon={Truck} onPress={() => pushAdmin('/admin/deliveries')} />
               <StatCard label="Avg. Fulfilment Time" value={minutesLabel(dashboard.operations.avgFulfillmentMinutes)} icon={Clock3} />
@@ -181,10 +202,10 @@ export default function AdminDashboardScreen() {
             <SectionLabel text="Live Order Pipeline" />
             <View style={styles.pipelineCard}>
               {PIPELINE_STAGES.map((stage, i) => {
-                const count = stage.statuses.reduce((sum, s) => sum + (dashboard.operations.todayByStatus?.[s] ?? 0), 0);
+                const count = pipelineCounts(dashboard.operations)[stage.key] ?? 0;
                 return (
                   <React.Fragment key={stage.key}>
-                    <Pressable style={styles.pipelineStage} onPress={() => pushAdmin(`/admin/orders?status=${stage.statuses[0]}`)}>
+                    <Pressable style={styles.pipelineStage} onPress={() => pushAdmin(ordersRouteForStage(stage.key))}>
                       <Text style={[styles.pipelineValue, count > 0 && { color: colors.primary }]}>{count}</Text>
                       <Text style={styles.pipelineLabel}>{stage.label}</Text>
                     </Pressable>
@@ -199,7 +220,9 @@ export default function AdminDashboardScreen() {
               <SectionLabel text="Recent Orders" />
               <Pressable onPress={() => pushAdmin('/admin/orders')}><Text style={styles.viewAllLink}>View all</Text></Pressable>
             </View>
-            {recentOrders.length === 0 ? (
+            {failedSections.includes('recentOrders') ? (
+              <SectionError what="recent orders" onRetry={() => load()} />
+            ) : recentOrders.length === 0 ? (
               <Text style={styles.emptyHint}>No orders yet today.</Text>
             ) : (
               <View style={{ gap: spacing.sm }}>
@@ -241,6 +264,12 @@ export default function AdminDashboardScreen() {
             )}
 
             {/* ---------------------------------------------------- Store performance ---------------------------------------------------- */}
+            {failedSections.includes('stores') && (
+              <>
+                <SectionLabel text="Store Performance" />
+                <SectionError what="store performance" onRetry={() => load()} />
+              </>
+            )}
             {stores.length > 0 && (
               <>
                 <SectionLabel text="Store Performance" />
@@ -274,7 +303,9 @@ export default function AdminDashboardScreen() {
               <SectionLabel text="Live Deliveries" />
               <Pressable onPress={() => pushAdmin('/admin/deliveries')}><Text style={styles.viewAllLink}>View all</Text></Pressable>
             </View>
-            {liveDeliveries.length === 0 ? (
+            {failedSections.includes('liveDeliveries') ? (
+              <SectionError what="live deliveries" onRetry={() => load()} />
+            ) : liveDeliveries.length === 0 ? (
               <Text style={styles.emptyHint}>No riders currently out on delivery.</Text>
             ) : (
               <View style={{ gap: spacing.sm }}>
@@ -334,6 +365,17 @@ export default function AdminDashboardScreen() {
 
 const TONE_COLOR = { error: colors.error, warning: colors.warning, info: colors.info } as const;
 
+function SectionError({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <View style={styles.sectionError}>
+      <Text style={styles.sectionErrorText}>Couldn't load {what}.</Text>
+      <Pressable onPress={onRetry} hitSlop={8}>
+        <Text style={styles.viewAllLink}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function SectionLabel({ text }: { text: string }) {
   return <Text style={styles.sectionLabel}>{text}</Text>;
 }
@@ -375,7 +417,7 @@ const styles = StyleSheet.create({
   content: { padding: spacing.xl, gap: spacing.sm, maxWidth: 1200, width: '100%', alignSelf: 'center' },
   errorText: { ...textStyles.bodySmall, color: colors.textSecondary, textAlign: 'center', paddingVertical: spacing.xxl },
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.md },
-  greeting: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 24, color: colors.textPrimary },
+  greeting: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: colors.textPrimary },
   liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   liveText: { ...textStyles.bodySmall, color: colors.textSecondary },
@@ -384,6 +426,8 @@ const styles = StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   viewAllLink: { ...textStyles.bodySmall, color: colors.primary, fontFamily: 'PlusJakartaSans_700Bold', marginTop: spacing.lg },
   emptyHint: { ...textStyles.bodySmall, color: colors.textMuted, paddingVertical: spacing.sm },
+  sectionError: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, backgroundColor: colors.errorTint, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  sectionErrorText: { ...textStyles.bodySmall, color: colors.error, flex: 1 },
 
   allClearCard: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.successTint,
@@ -404,7 +448,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, padding: spacing.md, ...shadows.xs,
   },
   pipelineStage: { flex: 1, alignItems: 'center', paddingVertical: spacing.xs },
-  pipelineValue: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 19, color: colors.textMuted },
+  pipelineValue: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 18, color: colors.textMuted },
   pipelineLabel: { ...textStyles.caption, fontSize: 10, color: colors.textSecondary, marginTop: 3, textAlign: 'center' },
   pipelineArrow: { width: 10, height: 1, backgroundColor: colors.divider },
 

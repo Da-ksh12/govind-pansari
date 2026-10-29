@@ -1,6 +1,8 @@
-import { supabase, uniqueChannel } from '../supabase/client';
+import { supabase } from '../supabase/client';
+import { liveFeed } from '../realtime/liveFeed';
 import { toCatalogueError } from '../supabase/errors';
 import { getDeliveryProofPhotoUrl } from '../storage/deliveryProof';
+import { orderItemImages } from '../imageSources';
 import type { Address, Order, OrderItem, OrderStatus, PaymentInfo } from '../../types/models';
 
 // DB order_status has two members the frontend spells differently:
@@ -30,6 +32,8 @@ interface OrderItemRow {
   quantity: number;
   unit_price: number;
   mrp: number;
+  /** Embedded so a line whose snapshot is empty (the product had no photo when it was ordered) still shows the product's current photo. */
+  products: { image: string | null } | null;
 }
 
 interface PaymentRow {
@@ -68,7 +72,7 @@ interface OrderRow {
 
 const ORDER_SELECT =
   'id, order_number, status, placed_at, subtotal, delivery_fee, total, store_id, estimated_delivery_minutes, delivery_address, ' +
-  'order_items(id, product_id, product_variant_id, product_name_snapshot, variant_snapshot, image_snapshot, quantity, unit_price, mrp), ' +
+  'order_items(id, product_id, product_variant_id, product_name_snapshot, variant_snapshot, image_snapshot, quantity, unit_price, mrp, products(image)), ' +
   'payments(method, status, payment_reference)';
 
 function toOrder(row: OrderRow): Order {
@@ -78,7 +82,7 @@ function toOrder(row: OrderRow): Order {
     variantId: i.product_variant_id,
     name: i.product_name_snapshot,
     variantLabel: i.variant_snapshot,
-    image: i.image_snapshot ?? '',
+    ...orderItemImages(i.image_snapshot, i.products?.image),
     quantity: i.quantity,
     price: Number(i.unit_price),
     mrp: Number(i.mrp),
@@ -135,10 +139,8 @@ export const orderRepository = {
    * is what actually scopes this to the signed-in customer.
    */
   subscribeToMyOrders(userId: string, onChange: () => void): () => void {
-    const channel = uniqueChannel(`my-orders-${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` }, onChange)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
+    // The store is signed-in-lifetime and has no screen hook, so it also asks to be resynced on foreground.
+    return liveFeed.watch([{ table: 'orders', filter: `user_id=eq.${userId}` }], onChange, { resyncOnForeground: true, catchUpOnConnect: true });
   },
 
   /**
@@ -153,13 +155,13 @@ export const orderRepository = {
     if (orderIds.length === 0) return {};
     const { data, error } = await supabase
       .from('order_items')
-      .select('order_id, image_snapshot')
-      .in('order_id', orderIds)
-      .not('image_snapshot', 'is', null);
+      .select('order_id, image_snapshot, products(image)')
+      .in('order_id', orderIds);
     if (error) return {}; // enrichment only — never block the notification list on this
     const map: Record<string, string> = {};
-    for (const row of data ?? []) {
-      if (!map[row.order_id] && row.image_snapshot) map[row.order_id] = row.image_snapshot;
+    for (const row of (data ?? []) as unknown as { order_id: string; image_snapshot: string | null; products: { image: string | null } | null }[]) {
+      const image = row.image_snapshot || row.products?.image;
+      if (!map[row.order_id] && image) map[row.order_id] = image;
     }
     return map;
   },

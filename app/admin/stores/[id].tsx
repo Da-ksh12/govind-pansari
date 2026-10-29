@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { AlertTriangle, ArrowLeft, Clock, MapPin, Package, PackageX, Phone, Store as StoreIcon, Truck, Users } from 'lucide-react-native';
+import { AlertTriangle, ArrowLeft, Clock, MapPin, Package, PackageX, Pencil, Phone, Store as StoreIcon, Truck, Users } from 'lucide-react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../../theme/icons';
 import { AdminShell } from '../../../components/admin/AdminShell';
@@ -14,6 +14,8 @@ import { pushAdmin } from '../../../services/adminNav';
 import { useAdminStore } from '../../../store/adminStore';
 import { useUIStore } from '../../../store/uiStore';
 import { adminRepository, type AdminStorePerformance } from '../../../services/repositories/adminRepository';
+import { EditField, EditSheet } from '../../../components/admin/EditSheet';
+import { clockLabel, parseClockTime as parseClock, validateStoreForm, type StoreFormErrors } from '../../../services/storeEdit';
 
 function minutesLabel(v: number | null): string {
   if (v == null) return '—';
@@ -28,6 +30,7 @@ export default function AdminStoreProfileScreen() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
   const hasPermission = useAdminStore((s) => s.hasPermission);
   const showToast = useUIStore((s) => s.showToast);
   const canManage = hasPermission('stores.manage');
@@ -102,9 +105,15 @@ export default function AdminStoreProfileScreen() {
           )}
           <View style={styles.infoRow}>
             <Clock size={13} color={colors.textSecondary} strokeWidth={ICON_STROKE} />
-            <Text style={styles.mutedText}>{store.opening_time} – {store.closing_time}</Text>
+            <Text style={styles.mutedText}>{clockLabel(store.opening_time)} – {clockLabel(store.closing_time)}</Text>
           </View>
           {store.status_reason && <Text style={styles.statusReason}>{store.status_reason}</Text>}
+          {canManage && (
+            <Pressable style={styles.editBtn} onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel="Edit store details">
+              <Pencil size={ICON_SIZE.xs} color={colors.primary} strokeWidth={ICON_STROKE} />
+              <Text style={styles.editBtnText}>Edit details</Text>
+            </Pressable>
+          )}
           {canManage && (
             <View style={styles.acceptingRow}>
               <Text style={styles.plainText}>Accepting new orders</Text>
@@ -151,11 +160,86 @@ export default function AdminStoreProfileScreen() {
           </View>
         )}
       </ScrollView>
+
+      {editing && (
+        <StoreEditor
+          store={store}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            load();
+          }}
+        />
+      )}
     </AdminShell>
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function StoreEditor({ store, onClose, onSaved }: { store: any; onClose: () => void; onSaved: () => void }) {
+  const showToast = useUIStore((s) => s.showToast);
+  const [name, setName] = useState<string>(store.name ?? '');
+  const [phone, setPhone] = useState<string>(store.phone ?? '');
+  const [addressLine, setAddressLine] = useState<string>(store.address_line ?? '');
+  const [city, setCity] = useState<string>(store.city ?? '');
+  const [opening, setOpening] = useState<string>((store.opening_time ?? '').slice(0, 5));
+  const [closing, setClosing] = useState<string>((store.closing_time ?? '').slice(0, 5));
+  const [errors, setErrors] = useState<StoreFormErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    const { errors: found, patch } = validateStoreForm({ name, phone, addressLine, city, opening, closing }, store);
+    setErrors(found);
+    setFormError(null);
+    if (Object.keys(found).length > 0) return;
+    if (Object.keys(patch).length === 0) {
+      showToast('Nothing was changed.', 'info');
+      onClose();
+      return;
+    }
+    setSaving(true);
+    try {
+      await adminRepository.updateStore(store.id, patch);
+      showToast('Store updated.', 'success');
+      onSaved();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Couldn't save the store. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Show how the typed times are understood ("= 9:00 PM"), so "21:00" and "9 pm" are never a guess.
+  const timeHint = (text: string) => {
+    const label = clockLabel(parseClock(text));
+    return label ? `= ${label}` : undefined;
+  };
+
+  return (
+    <EditSheet title="Edit store details" onClose={onClose} onSave={save} saving={saving} error={formError}>
+      <EditField label="Store name" value={name} onChangeText={setName} error={errors.name} maxLength={80} />
+      <EditField label="Phone" value={phone} onChangeText={setPhone} error={errors.phone} keyboardType="phone-pad" hint="Shown to customers and riders." />
+      <EditField label="Address" value={addressLine} onChangeText={setAddressLine} error={errors.addressLine} maxLength={120} />
+      <EditField label="City" value={city} onChangeText={setCity} error={errors.city} maxLength={40} />
+      <EditField label="Opens at" value={opening} onChangeText={setOpening} error={errors.opening} hint={timeHint(opening)} autoCapitalize="none" autoCorrect={false} placeholder="09:00" />
+      <EditField
+        label="Closes at"
+        value={closing}
+        onChangeText={setClosing}
+        error={errors.closing}
+        hint={timeHint(closing) ? `${timeHint(closing)} · Customers can order only between these times (India time).` : undefined}
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="21:00"
+      />
+    </EditSheet>
+  );
+}
+
 const styles = StyleSheet.create({
+  editBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md, paddingHorizontal: spacing.md, minHeight: 40, borderRadius: radius.pill, backgroundColor: colors.primaryTint },
+  editBtnText: { ...textStyles.caption, color: colors.primary, fontFamily: 'PlusJakartaSans_700Bold' },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: spacing.lg, maxWidth: 900, width: '100%', alignSelf: 'center', gap: spacing.sm },
   backRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },

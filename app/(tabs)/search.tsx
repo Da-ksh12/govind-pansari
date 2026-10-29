@@ -151,17 +151,18 @@ export default function SearchScreen() {
   // On wide viewports DesktopHeader already carries a persistent search
   // box (section 5) — this page's own input is only shown on mobile, to
   // avoid two search boxes stacked on top of each other on desktop.
+  // The bar sits directly in the row. It used to be wrapped in `<View style={{ flex: 1 }}>`: inside this auto-height column
+  // that wrapper can be measured at zero height, which collapses the row to its padding and lets the 48 dp bar overflow on
+  // top of the list — so "Popular Right Now" ended up underneath the search bar. The row now reserves the bar's height itself.
   const searchRowContent = !isWide && (
     <View style={styles.searchRow}>
-      <View style={{ flex: 1 }}>
-        <SearchBar
-          ref={searchInputRef}
-          editable
-          value={query}
-          onChangeText={setQuery}
-          onSubmitEditing={() => commitSearch(query)}
-        />
-      </View>
+      <SearchBar
+        ref={searchInputRef}
+        editable
+        value={query}
+        onChangeText={setQuery}
+        onSubmitEditing={() => commitSearch(query)}
+      />
     </View>
   );
 
@@ -320,8 +321,9 @@ export default function SearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  searchRow: { paddingHorizontal: spacing.base, paddingTop: spacing.sm, paddingBottom: spacing.sm },
-  content: { paddingHorizontal: spacing.base, paddingBottom: 140 },
+  // 48 (the bar) + the vertical padding: reserved explicitly so nothing below can ever slide under the bar, keyboard open or not.
+  searchRow: { paddingHorizontal: spacing.base, paddingTop: spacing.sm, paddingBottom: spacing.sm, minHeight: 48 + spacing.sm * 2, flexShrink: 0 },
+  content: { paddingHorizontal: spacing.base, paddingTop: spacing.xs, paddingBottom: 140 },
   wideContent: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.xxl, alignItems: 'center' },
   wideInner: { width: '100%', maxWidth: 1100 },
   wideHero: { alignItems: 'center', marginBottom: spacing.xl },

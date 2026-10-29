@@ -4,7 +4,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-na
 import { router } from 'expo-router';
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
 import { AppImage } from '../ui/AppImage';
-import { ProductBadgePill } from '../ui/Badge';
+import { ProductBadgeStack } from '../ui/Badge';
 import { PriceBlock } from '../ui/PriceBlock';
 import { Rating } from '../ui/Rating';
 import { AddToCartControl } from '../ui/AddToCartControl';
@@ -41,9 +41,9 @@ export function ProductCard({ product, width = 168 }: ProductCardProps) {
     >
       <View style={styles.imageWrap}>
         <AppImage uri={product.images[0]} style={styles.image} contentFit="cover" kind="product" borderRadius={0} />
-        {product.badges[0] && (
+        {product.badges.length > 0 && (
           <View style={styles.badgeSlot}>
-            <ProductBadgePill kind={product.badges[0]} />
+            <ProductBadgeStack badges={product.badges} />
           </View>
         )}
         <View style={styles.heartSlot}>

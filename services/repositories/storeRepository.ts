@@ -3,23 +3,10 @@ import { toCatalogueError, CatalogueError } from '../supabase/errors';
 import { toStore } from '../supabase/mappers';
 import type { Store, LatLng } from '../../types/models';
 import type { StoreRow } from '../../types/supabase';
+import { isValidCoordinate, type ServiceabilityResult } from '../serviceability';
 
-export interface EligibleStore {
-  storeId: string;
-  storeName: string;
-  distanceMeters: number;
-}
-
-export type ServiceabilityResult =
-  | {
-      serviceable: true;
-      zoneId: string;
-      deliveryFee: number;
-      minimumOrderValue: number;
-      estimatedDeliveryMinutes: number;
-      eligibleStores: EligibleStore[];
-    }
-  | { serviceable: false; reason: 'OUTSIDE_SERVICE_AREA' };
+// The result shape (and the wording for it) lives in ../serviceability so it can be unit-tested; re-exported for callers.
+export type { EligibleStore, ServiceabilityResult, UnserviceableReason } from '../serviceability';
 
 async function getStoreById(id: string): Promise<Store | undefined> {
   const { data, error } = await supabase.from('stores').select('*').eq('id', id).maybeSingle();
@@ -37,10 +24,10 @@ export const storeRepository = {
   getById: getStoreById,
 
   /**
-   * Serviceability lookup: delivery-zone geofencing + priority/distance
-   * ranking, via the find_serviceable_stores() function from the Phase
-   * 01 schema (read-only, already tested against the live project) —
-   * not a naive straight-line nearest-store guess.
+   * The nearest store that can serve this point right now, via the
+   * server's find_serviceable_stores() — inside the delivery radius,
+   * accepting orders and open, nearest first. The same eligibility
+   * check_serviceability() and checkout use.
    */
   async findNearest(lat: number, lng: number): Promise<Store> {
     const { data, error } = await supabase.rpc('find_serviceable_stores', { customer_lat: lat, customer_lng: lng });
@@ -61,6 +48,8 @@ export const storeRepository = {
    * it matters (e.g. right before checkout in a later phase).
    */
   async checkServiceability(position: LatLng): Promise<ServiceabilityResult> {
+    // Bad input is an answer, not a network failure: no request is made for coordinates that cannot be a place.
+    if (!isValidCoordinate(position.lat, position.lng)) return { serviceable: false, reason: 'INVALID_COORDINATES' };
     const { data, error } = await supabase.rpc('check_serviceability', { p_lat: position.lat, p_lng: position.lng });
     if (error) throw toCatalogueError(error);
     return data as ServiceabilityResult;

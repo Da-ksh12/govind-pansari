@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
@@ -26,6 +26,7 @@ import { AnimatedPressable } from '../components/motion/AnimatedPressable';
 import { formatINR } from '../components/ui/PriceBlock';
 import { useCartLines } from '../hooks/useCartLines';
 import { useCartStore } from '../store/cartStore';
+import { useUIStore } from '../store/uiStore';
 import { useOrdersStore } from '../store/ordersStore';
 import { useAuthStore } from '../store/authStore';
 import { addressRepository } from '../services/repositories/addressRepository';
@@ -35,7 +36,10 @@ import { storeRepository } from '../services/repositories/storeRepository';
 import { locationService } from '../services/location/locationService';
 import { geocodingService } from '../services/location/geocodingService';
 import { openRazorpayCheckout } from '../services/payments/razorpayCheckout';
-import { RazorpayCheckoutCancelledError } from '../services/payments/razorpayCheckout.types';
+import { PaymentVerificationUnavailableError, RazorpayCheckoutCancelledError, RazorpayCheckoutFailedError } from '../services/payments/razorpayCheckout.types';
+import { classifyPaymentFailure, verificationFailureMessage } from '../services/payments/paymentErrors';
+import { cartSignature, evaluatePlaceOrder, paymentStepState, type SummaryState } from '../services/checkoutGate';
+import { describeServiceability } from '../services/serviceability';
 import type { Address, LatLng, PaymentInfo } from '../types/models';
 
 interface DetectedLocation {
@@ -85,12 +89,20 @@ export default function CheckoutScreen() {
   const addOrder = useOrdersStore((s) => s.addOrder);
   const profile = useAuthStore((s) => s.profile);
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentInfo['method']>('cod');
+  // No default: the Payment step must not read as complete, and the order
+  // must not be placeable, until the customer has actually chosen a method.
+  const [paymentMethod, setPaymentMethod] = useState<PaymentInfo['method'] | null>(null);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [summary, setSummary] = useState<CheckoutSummaryResult | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  // The cart the summary above was computed for. The Checkout screen lets the
+  // customer change quantities, but the server summary (total, minimum-order
+  // check, the Place Order button) used to be fetched only on focus or address
+  // change — so after an edit the button reflected the OLD cart (QA TC-03).
+  const [summarySignature, setSummarySignature] = useState<string | null>(null);
+  const summaryRequestId = useRef(0);
   const [placing, setPlacing] = useState(false);
 
   // Real checkout-state tracking (section 8-9 of the hardening brief) —
@@ -102,6 +114,7 @@ export default function CheckoutScreen() {
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [paymentFailureModal, setPaymentFailureModal] = useState<{ message: string } | null>(null);
   const [genericErrorModal, setGenericErrorModal] = useState<{ message: string } | null>(null);
+  const [retryPending, setRetryPending] = useState(false);
 
   // Auto-detected current location (client request: "auto-fetch current
   // location, no need to change it at checkout, but let me confirm/
@@ -217,38 +230,73 @@ export default function CheckoutScreen() {
   // create_order_from_cart's idempotency check actually dedupes them,
   // but never reused across a genuinely different attempt (a different
   // address is a different order).
+  // `attempt` is bumped after a payment attempt fails or is cancelled: that
+  // attempt's order is cancelled and its cart restored, so the retry must be a
+  // genuinely new checkout (a new key) — reusing the old key would point at a
+  // finished order.
+  const [attempt, setAttempt] = useState(0);
   const idempotencyKey = useMemo(
     () => (selectedAddressId ? checkoutRepository.newIdempotencyKey() : null),
-    [selectedAddressId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedAddressId, attempt],
   );
 
+  const currentCartSignature = cartSignature(lines);
+
+  // Re-fetch the server's view of the order whenever the address OR the cart
+  // changes. A short debounce coalesces a burst of +/- taps into one request,
+  // and a request id makes sure a slow, older response can never overwrite a
+  // newer one.
   useFocusEffect(
     useCallback(() => {
       if (!selectedAddressId) {
         setSummary(null);
+        setSummarySignature(null);
         return;
       }
+      const requestId = ++summaryRequestId.current;
+      const signatureForRequest = currentCartSignature;
       setLoadingSummary(true);
-      checkoutRepository
-        .getSummary(selectedAddressId)
-        .then((result) => {
-          setSummary(result);
-          // The one place Checkout can detect "the server cart doesn't
-          // match what the local store thinks it has" — e.g. a previous
-          // checkout attempt created (then failed/cancelled) a gateway
-          // order that has since been resolved some other way. Resync
-          // rather than leave Cart and Checkout disagreeing (section
-          // 15-18, 41).
-          if (!result.success && result.code === 'CART_EMPTY') {
-            useCartStore.getState().loadCart();
-          }
-        })
-        .catch(() => setSummary({ success: false, code: 'OUT_OF_STOCK', message: "Couldn't load your order summary. Please try again." }))
-        .finally(() => setLoadingSummary(false));
-    }, [selectedAddressId]),
+      const timer = setTimeout(() => {
+        checkoutRepository
+          .getSummary(selectedAddressId)
+          .then((result) => {
+            if (requestId !== summaryRequestId.current) return;
+            setSummary(result);
+            setSummarySignature(signatureForRequest);
+            // The one place Checkout can detect "the server cart doesn't
+            // match what the local store thinks it has" — e.g. a previous
+            // checkout attempt created (then failed/cancelled) a gateway
+            // order that has since been resolved some other way. Resync
+            // rather than leave Cart and Checkout disagreeing (section
+            // 15-18, 41).
+            if (!result.success && result.code === 'CART_EMPTY') {
+              useCartStore.getState().loadCart();
+            }
+          })
+          .catch(() => {
+            if (requestId !== summaryRequestId.current) return;
+            setSummary({ success: false, code: 'OUT_OF_STOCK', message: "Couldn't load your order summary. Please try again." });
+            setSummarySignature(signatureForRequest);
+          })
+          .finally(() => {
+            if (requestId === summaryRequestId.current) setLoadingSummary(false);
+          });
+      }, 120); // short: a burst of +/- taps still coalesces, but the "Updating your total…" wait is no longer padded (QA TC-30)
+      return () => clearTimeout(timer);
+    }, [selectedAddressId, currentCartSignature]),
   );
 
-  const canPlaceOrder = summary?.success && summary.meetsMinimumOrder && !placing && !loadingSummary;
+  // What the Place Order button, its explanation and the Payment step all
+  // read — one decision, one answer for identical inputs.
+  const summaryState: SummaryState =
+    loadingSummary || !summary || summarySignature !== currentCartSignature
+      ? { status: 'loading' }
+      : summary.success
+        ? { status: 'ready', meetsMinimumOrder: summary.meetsMinimumOrder, amountToMinimumOrder: summary.amountToMinimumOrder, minimumOrderValue: summary.minimumOrderValue }
+        : { status: 'failed', message: summary.message };
+  const placeGate = evaluatePlaceOrder({ hasAddress: !!selectedAddress, paymentMethod, summary: summaryState, placing });
+  const canPlaceOrder = placeGate.canPlace;
 
   // Real, state-driven progress (section 7-9) — this is one continuous
   // scrolling form, not a gated multi-screen wizard, so each step
@@ -260,15 +308,23 @@ export default function CheckoutScreen() {
   // genuinely been placed (right before navigating to order-success),
   // never just because the cart is valid and ready to submit.
   const addressDone = !!selectedAddress;
-  const deliveryDone = !!summary?.success;
-  const paymentDone = deliveryDone && (paymentMethod === 'cod' || gatewayPaymentConfirmed);
+  const deliveryDone = summaryState.status === 'ready';
+  const paymentState = paymentStepState({ deliveryDone, paymentMethod, gatewayPaymentConfirmed, gatewayPaymentFailed, placing });
+  const paymentDone = paymentState === 'verified';
   const reviewDone = orderPlaced;
   const stepDone = [addressDone, deliveryDone, paymentDone, reviewDone];
-  const stepFailed = [false, false, gatewayPaymentFailed, false];
+  const stepFailed = [false, false, paymentState === 'failed', false];
   const activeStepIndex = stepDone.indexOf(false);
 
-  /** Returns true once the payment is genuinely verified server-side (see verify-razorpay-payment) — never trusts the client-reported "success" alone. */
-  const completeGatewayPayment = async (orderId: string, orderNumber: string): Promise<boolean> => {
+  /**
+   * 'paid' only once the payment is genuinely verified server-side (see
+   * verify-razorpay-payment) — never on the client-reported "success" alone.
+   * 'failed' = no money was taken (or the server refused the payment).
+   * 'unknown' = the bank reported success but the server could not be reached
+   * to verify it: the money may have been taken, so nothing is cancelled and
+   * the customer is not asked to pay again (the Razorpay webhook settles it).
+   */
+  const completeGatewayPayment = async (orderId: string, orderNumber: string): Promise<'paid' | 'failed' | 'unknown'> => {
     try {
       const razorpayOrder = await checkoutRepository.createRazorpayOrder(orderId);
       const result = await openRazorpayCheckout({
@@ -289,25 +345,32 @@ export default function CheckoutScreen() {
       });
       if (!verifyResult.success) {
         setGatewayPaymentFailed(true);
-        setPaymentFailureModal({ message: "We couldn't verify your payment. Please try again — your order is saved and nothing was charged twice." });
-        return false;
+        setPaymentFailureModal({ message: verificationFailureMessage() });
+        return 'failed';
       }
       setGatewayPaymentConfirmed(true);
-      return true;
+      return 'paid';
     } catch (e) {
+      if (e instanceof PaymentVerificationUnavailableError) return 'unknown';
       // A cancelled sheet is a quiet, expected exit (section 13) — no
       // error popup, no "failed" stepper state, just back to checkout
-      // with the cart untouched. A genuine failure gets both.
-      if (!(e instanceof RazorpayCheckoutCancelledError)) {
+      // with the cart untouched. A genuine failure gets both, but only ever
+      // the classified, customer-safe message: the gateway's own payload
+      // (error codes, JSON, "description":"undefined") stays in the logs.
+      if (e instanceof RazorpayCheckoutCancelledError) return 'failed';
+      const failure = classifyPaymentFailure(e instanceof RazorpayCheckoutFailedError ? e.raw : e);
+      // eslint-disable-next-line no-console
+      console.warn('[checkout] payment failed:', failure.kind, failure.diagnostics);
+      if (failure.showError) {
         setGatewayPaymentFailed(true);
-        setPaymentFailureModal({ message: e instanceof Error ? e.message : "We couldn't complete your payment. Please try again." });
+        setPaymentFailureModal({ message: failure.message });
       }
-      return false;
+      return 'failed';
     }
   };
 
   const handlePlaceOrder = async () => {
-    if (!canPlaceOrder || !selectedAddressId || !idempotencyKey) return;
+    if (!canPlaceOrder || !selectedAddressId || !idempotencyKey || !paymentMethod) return;
     setPlacing(true);
     try {
       // Idempotent on (user, idempotencyKey) — retrying after a
@@ -315,14 +378,34 @@ export default function CheckoutScreen() {
       // reservation rather than creating a duplicate.
       const result = await checkoutRepository.placeOrder(selectedAddressId, idempotencyKey, paymentMethod);
       if (!result.success) {
+        if (result.code === 'CHECKOUT_ALREADY_PROCESSED') {
+          // The previous attempt under this key was already closed. Start a
+          // new one (new key) and let the customer simply tap again — never
+          // surface it as a stuck "already placed" screen.
+          setAttempt((a) => a + 1);
+          useCartStore.getState().loadCart();
+          setGenericErrorModal({ message: 'Your previous payment attempt was closed. Please tap Place Order again.' });
+          setPlacing(false);
+          return;
+        }
         setSummary(result);
         if (result.code === 'CART_EMPTY') useCartStore.getState().loadCart();
         setPlacing(false);
         return;
       }
       if (paymentMethod !== 'cod') {
-        const paid = await completeGatewayPayment(result.orderId, result.orderNumber);
-        if (!paid) {
+        const outcome = await completeGatewayPayment(result.orderId, result.orderNumber);
+        if (outcome === 'unknown') {
+          // The order stays exactly as it is — see completeGatewayPayment.
+          // Leave Checkout (its cart is now empty server-side) for My Orders,
+          // where the order appears the moment the payment is confirmed.
+          useUIStore.getState().showToast("We're confirming your payment with the bank. Your order will appear in My Orders once it's confirmed — please don't pay again.", 'info');
+          clearCartLocal();
+          setPlacing(false);
+          router.replace('/(tabs)/orders');
+          return;
+        }
+        if (outcome !== 'paid') {
           // create_order_from_cart() already created a real order +
           // inventory reservation, and deleted the server-side cart,
           // before Razorpay even opened (so a retry with the same
@@ -343,6 +426,7 @@ export default function CheckoutScreen() {
             // this is what guarantees Cart and Checkout can never
             // disagree after this point.
             useCartStore.getState().loadCart();
+            setAttempt((a) => a + 1);
           }
           setPlacing(false);
           return;
@@ -363,6 +447,17 @@ export default function CheckoutScreen() {
   useEffect(() => {
     if (totalCount === 0) router.replace('/cart');
   }, [totalCount]);
+
+  // "Try Again" after a failed payment: wait for the refreshed total, then
+  // place the order — or drop the retry if something else (a minimum order,
+  // a missing address) now stands in the way, which the button explains.
+  useEffect(() => {
+    if (!retryPending) return;
+    if (placeGate.block === 'summary_loading' || placeGate.block === 'placing') return;
+    setRetryPending(false);
+    if (placeGate.canPlace) handlePlaceOrder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryPending, placeGate.block, placeGate.canPlace]);
 
   if (totalCount === 0) {
     return <SafeScreen />;
@@ -529,12 +624,10 @@ export default function CheckoutScreen() {
               </View>
             )}
 
-            {summary?.success && !summary.meetsMinimumOrder && (
+            {placeGate.block === 'below_minimum' && (
               <View style={styles.warningBanner}>
                 <AlertTriangle size={ICON_SIZE.sm} color={colors.warning} strokeWidth={ICON_STROKE} />
-                <Text style={styles.warningBody}>
-                  Add {formatINR(summary.amountToMinimumOrder)} more to place an order in this area (minimum {formatINR(summary.minimumOrderValue)}).
-                </Text>
+                <Text style={styles.warningBody}>{placeGate.message}</Text>
               </View>
             )}
 
@@ -574,7 +667,7 @@ export default function CheckoutScreen() {
 
             <View style={styles.card}>
               <Text style={[styles.cardHeaderTitle, { marginBottom: spacing.sm }]}>Bill Summary</Text>
-              {loadingSummary || !summary?.success ? (
+              {summaryState.status === 'loading' || !summary?.success ? (
                 <View style={{ paddingVertical: spacing.md, alignItems: 'center', gap: spacing.sm }}>
                   <BrandedLoader />
                   <Text style={styles.billLoadingText}>Finding the nearest store for your order…</Text>
@@ -596,23 +689,35 @@ export default function CheckoutScreen() {
       </ScrollView>
 
       <View style={[styles.stickyBar, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-        <View>
-          <Text style={styles.stickyTotal}>{summary?.success ? formatINR(summary.total) : '—'}</Text>
-          <Text style={styles.stickyLink}>{PAYMENT_METHOD_LABEL[paymentMethod]}</Text>
+        {/* Why the button is disabled, in words — never a silently greyed-out button. */}
+        {placeGate.message && !placeGate.canPlace && (
+          <Text style={styles.gateMessage} accessibilityLiveRegion="polite">{placeGate.message}</Text>
+        )}
+        <View style={styles.stickyRow}>
+          <View style={{ flexShrink: 1 }}>
+            <Text style={styles.stickyTotal}>{summaryState.status === 'ready' && summary?.success ? formatINR(summary.total) : '—'}</Text>
+            <Text style={styles.stickyLink}>{paymentMethod ? PAYMENT_METHOD_LABEL[paymentMethod] : 'Select a payment method'}</Text>
+          </View>
+          <AnimatedPressable
+            style={[styles.placeOrderBtn, !canPlaceOrder && styles.placeOrderBtnDisabled]}
+            pressScale={0.97}
+            onPress={handlePlaceOrder}
+            disabled={!canPlaceOrder}
+            accessibilityState={{ disabled: !canPlaceOrder }}
+          >
+            {placing ? (
+              <>
+                <BrandedLoader color={colors.white} />
+                <Text style={styles.placeOrderText}>Placing your order…</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.placeOrderText}>{paymentMethod && paymentMethod !== 'cod' ? 'Pay Now' : 'Place Order'}</Text>
+                <ChevronRight size={ICON_SIZE.sm} color={colors.white} strokeWidth={ICON_STROKE} />
+              </>
+            )}
+          </AnimatedPressable>
         </View>
-        <AnimatedPressable style={[styles.placeOrderBtn, !canPlaceOrder && styles.placeOrderBtnDisabled]} pressScale={0.97} onPress={handlePlaceOrder} disabled={!canPlaceOrder}>
-          {placing ? (
-            <>
-              <BrandedLoader color={colors.white} />
-              <Text style={styles.placeOrderText}>Placing your order…</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.placeOrderText}>{paymentMethod === 'cod' ? 'Place Order' : 'Pay Now'}</Text>
-              <ChevronRight size={ICON_SIZE.sm} color={colors.white} strokeWidth={ICON_STROKE} />
-            </>
-          )}
-        </AnimatedPressable>
       </View>
 
       <GPErrorModal
@@ -622,8 +727,11 @@ export default function CheckoutScreen() {
         message={`${paymentFailureModal?.message ?? ''}\n\nYour cart is safe.`}
         primaryLabel="Try Again"
         onPressPrimary={() => {
+          // The cart is being restored from the server and the total
+          // re-checked; retry as soon as the order can actually be placed
+          // rather than silently doing nothing while it refreshes.
           setPaymentFailureModal(null);
-          handlePlaceOrder();
+          setRetryPending(true);
         }}
         secondaryLabel="Change Payment Method"
         onPressSecondary={() => setPaymentFailureModal(null)}
@@ -650,12 +758,32 @@ function CheckoutIssueBanner({
   onAddress: () => void;
   onEditCart: () => void;
 }) {
-  const copy: Record<string, { title: string; action?: { label: string; onPress: () => void } }> = {
+  // Delivery problems read exactly as they do on the address screens (same server reason, same wording).
+  const delivery =
+    result.code === 'OUTSIDE_SERVICE_AREA' || result.code === 'STORE_CLOSED' || result.code === 'STORES_NOT_ACCEPTING_ORDERS' || result.code === 'NO_ACTIVE_STORES' || result.code === 'INVALID_COORDINATES'
+      ? describeServiceability({ serviceable: false, reason: result.code, opensAt: result.opensAt, closesAt: result.closesAt, maxRadiusKm: result.maxRadiusKm, nearestStore: result.nearestStore })
+      : null;
+  const copy: Record<string, { title: string; body?: string; action?: { label: string; onPress: () => void } }> = {
     CART_EMPTY: { title: 'Your cart is empty', action: { label: 'Go to Cart', onPress: onEditCart } },
     ADDRESS_NOT_FOUND: { title: 'Please choose a delivery address', action: { label: 'Choose Address', onPress: onAddress } },
     PRODUCT_UNAVAILABLE: { title: 'Some items in your cart are no longer available', action: { label: 'Edit Cart', onPress: onEditCart } },
-    OUTSIDE_SERVICE_AREA: { title: "We don't deliver to this address yet", action: { label: 'Change Address', onPress: onAddress } },
-    CART_NOT_FULFILLABLE: { title: 'No nearby store can fulfill your whole cart right now', action: { label: 'Edit Cart', onPress: onEditCart } },
+    ...(delivery
+      ? {
+          [result.code]: {
+            title: delivery.title,
+            body: delivery.message,
+            action: result.code === 'STORE_CLOSED' || result.code === 'STORES_NOT_ACCEPTING_ORDERS' ? undefined : { label: 'Change Address', onPress: onAddress },
+          },
+        }
+      : {}),
+    // One store has to supply the whole order. Name the items nobody nearby has when we know them;
+    // otherwise every item is stocked somewhere, just not all at the same store.
+    CART_NOT_FULFILLABLE: {
+      title: result.unavailableItems && result.unavailableItems.length > 0
+        ? "These items can't be delivered to you right now — remove them to continue"
+        : "These items aren't all available from one store near you — try removing one",
+      action: { label: 'Edit Cart', onPress: onEditCart },
+    },
     BELOW_MINIMUM_ORDER: { title: result.message },
     OUT_OF_STOCK: { title: result.message, action: { label: 'Edit Cart', onPress: onEditCart } },
     CHECKOUT_ALREADY_PROCESSED: { title: 'This order was already placed' },
@@ -667,6 +795,7 @@ function CheckoutIssueBanner({
       <AlertTriangle size={ICON_SIZE.md} color={colors.error} strokeWidth={ICON_STROKE} />
       <View style={{ flex: 1 }}>
         <Text style={styles.errorTitle}>{meta.title}</Text>
+        {meta.body && <Text style={styles.errorBody}>{meta.body}</Text>}
         {result.unavailableItems && result.unavailableItems.length > 0 && (
           <Text style={styles.errorBody}>{result.unavailableItems.join(', ')}</Text>
         )}
@@ -692,7 +821,7 @@ function BillLine({ label, value, tone, bold }: { label: string; value: string; 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.base, paddingVertical: spacing.md },
   headerBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', ...shadows.xs },
-  headerTitle: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 22, color: colors.textPrimary },
+  headerTitle: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 20, color: colors.textPrimary },
   secureRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   secureText: { ...textStyles.caption, color: colors.success },
   stepRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: spacing.xl, marginBottom: spacing.md },
@@ -772,9 +901,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
@@ -784,6 +911,8 @@ const styles = StyleSheet.create({
   },
   stickyTotal: { ...textStyles.priceLarge, color: colors.textPrimary },
   stickyLink: { ...textStyles.caption, color: colors.textSecondary, marginTop: 1 },
+  stickyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+  gateMessage: { ...textStyles.caption, color: colors.textSecondary, textAlign: 'left' },
   placeOrderBtn: {
     flexDirection: 'row',
     alignItems: 'center',

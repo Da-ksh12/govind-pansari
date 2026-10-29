@@ -12,6 +12,10 @@ import { bannerImg } from '../data/images';
 
 const WIDE_BREAKPOINT = 900;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Customers sign in or register with a mobile number + OTP. The email code path is kept (app/otp.tsx still
+// handles it) but switched off here: Supabase allows only 2 sign-in emails an hour, so with open registration
+// the third person in that hour would get an error.
+const EMAIL_SIGN_IN_ENABLED = false;
 
 export default function LoginScreen() {
   const [mode, setMode] = useState<'phone' | 'email'>('phone');
@@ -56,9 +60,11 @@ export default function LoginScreen() {
   const formContent = (
     <>
       {!isWide && <Monogram size={80} onDark={false} />}
-      <Text style={[styles.title, isWide && styles.titleWide]}>Welcome back</Text>
+      <Text style={[styles.title, isWide && styles.titleWide]}>Sign in or sign up</Text>
       <Text style={styles.subtitle}>
-        {mode === 'phone' ? 'Sign in to continue shopping premium dry fruits & spices.' : "Sign in with your email — we'll send a 6-digit code."}
+        {mode === 'phone'
+          ? "Enter your mobile number and we'll text you a 6-digit code. New here? Your account is created once you verify it."
+          : "Sign in with your email — we'll send a 6-digit code."}
       </Text>
 
       {mode === 'phone' ? (
@@ -110,11 +116,13 @@ export default function LoginScreen() {
         {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.ctaText}>Continue</Text>}
       </Pressable>
 
-      <Pressable onPress={switchMode} hitSlop={8} style={styles.switchModeBtn}>
-        <Text style={styles.switchModeText}>
-          {mode === 'phone' ? 'Continue with email instead' : 'Continue with phone number instead'}
-        </Text>
-      </Pressable>
+      {EMAIL_SIGN_IN_ENABLED && (
+        <Pressable onPress={switchMode} hitSlop={8} style={styles.switchModeBtn}>
+          <Text style={styles.switchModeText}>
+            {mode === 'phone' ? 'Continue with email instead' : 'Continue with phone number instead'}
+          </Text>
+        </Pressable>
+      )}
 
       <Text style={styles.terms}>
         By continuing, you agree to Govind Pansari's{' '}

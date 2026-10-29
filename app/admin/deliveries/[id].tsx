@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Camera, Check, IndianRupee, MapPin, Navigation, Package, Phone, Truck, User } from 'lucide-react-native';
@@ -12,6 +12,15 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 import { formatINR } from '../../../components/ui/PriceBlock';
 import { pushAdmin } from '../../../services/adminNav';
 import { adminRepository } from '../../../services/repositories/adminRepository';
+import { storeOpsRepository } from '../../../services/repositories/storeOpsRepository';
+import { describeAssignmentError } from '../../../services/assignmentErrors';
+import { canCancelAssignment } from '../../../services/riderAssignment';
+import { AssignRiderModal, type AssignableOrder } from '../../../components/admin/AssignRiderModal';
+import { CancelAssignmentDialog } from '../../../components/dispatch/CancelAssignmentDialog';
+import { useAdminStore } from '../../../store/adminStore';
+import { useStableCallback } from '../../../hooks/useStableCallback';
+import { useRefetchOnForeground } from '../../../hooks/useRefetchOnForeground';
+import { useUIStore } from '../../../store/uiStore';
 
 const TERMINAL = new Set(['completed', 'failed', 'declined', 'expired', 'cancelled']);
 
@@ -39,6 +48,10 @@ export default function AdminDeliveryDetailScreen() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [detail, setDetail] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [assignOrder, setAssignOrder] = useState<AssignableOrder | null>(null);
+  const hasPermission = useAdminStore((s) => s.hasPermission);
+  const showToast = useUIStore((s) => s.showToast);
 
   const load = useCallback(() => {
     if (!id) return;
@@ -47,6 +60,15 @@ export default function AdminDeliveryDetailScreen() {
   }, [id]);
 
   useFocusEffect(load);
+
+  // Live: this assignment's own row (accepted, at store, picked up, completed, reassigned, cancelled). A live refresh
+  // keeps the current screen and never swaps a good page for an error.
+  const refreshQuietly = useStableCallback(() => {
+    if (!id) return;
+    adminRepository.getDeliveryDetail(id).then((d) => d && setDetail(d)).catch(() => {});
+  });
+  useEffect(() => (id ? adminRepository.subscribeToAdminDelivery(id, refreshQuietly) : undefined), [id, refreshQuietly]);
+  useRefetchOnForeground(refreshQuietly);
 
   if (loading && !detail) {
     return (
@@ -68,6 +90,24 @@ export default function AdminDeliveryDetailScreen() {
   const store = detail.stores;
   const timeline = buildTimeline(detail);
   const isLive = !TERMINAL.has(detail.status);
+  const riderName: string = rider?.profiles?.full_name ?? 'The rider';
+  const orderForAssign: AssignableOrder = { id: detail.order_id, order_number: order?.order_number ?? '', store_name: store?.name ?? '', total: order?.total ?? 0 };
+  const canCancel = isLive && canCancelAssignment(detail.status) && hasPermission('deliveries.reassign');
+  // A declined / timed-out request leaves the order ready for pickup with nobody on it.
+  const canChooseAnother = (detail.status === 'declined' || detail.status === 'expired') && order?.status === 'packed' && hasPermission('deliveries.assign');
+
+  const cancelAssignment = async () => {
+    try {
+      await storeOpsRepository.cancelAssignment(detail.id, 'reassigning');
+    } catch (e) {
+      showToast(describeAssignmentError(e).message, 'error');
+      load();
+      return;
+    }
+    // Taken back — now choose the replacement straight away.
+    load();
+    setAssignOrder(orderForAssign);
+  };
 
   return (
     <AdminShell title={`Delivery #${order?.order_number ?? ''}`}>
@@ -94,6 +134,21 @@ export default function AdminDeliveryDetailScreen() {
             <Truck size={ICON_SIZE.sm} color={colors.primary} strokeWidth={ICON_STROKE} />
             <Text style={styles.trackBtnText}>View Live Tracking</Text>
           </Pressable>
+        )}
+
+        {(canCancel || canChooseAnother) && (
+          <View style={styles.actionRow}>
+            {canCancel && (
+              <Pressable style={styles.cancelBtn} onPress={() => setCancelOpen(true)}>
+                <Text style={styles.cancelBtnText}>Cancel assignment</Text>
+              </Pressable>
+            )}
+            {canChooseAnother && (
+              <Pressable style={styles.chooseBtn} onPress={() => setAssignOrder(orderForAssign)}>
+                <Text style={styles.chooseBtnText}>Choose another rider</Text>
+              </Pressable>
+            )}
+          </View>
         )}
 
         <View style={styles.grid}>
@@ -203,12 +258,34 @@ export default function AdminDeliveryDetailScreen() {
           </View>
         )}
       </ScrollView>
+
+      <CancelAssignmentDialog
+        visible={cancelOpen}
+        riderName={riderName}
+        orderNumber={order?.order_number ?? ''}
+        deliveryStatus={detail.status}
+        onConfirm={cancelAssignment}
+        onClose={() => setCancelOpen(false)}
+      />
+      <AssignRiderModal
+        order={assignOrder}
+        onClose={() => setAssignOrder(null)}
+        onChanged={() => {
+          // The new rider is on a new delivery — back to the list, where it shows up.
+          router.replace('/admin/deliveries' as never);
+        }}
+      />
     </AdminShell>
   );
 }
 
 const styles = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  cancelBtn: { borderWidth: 1.5, borderColor: colors.error, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  cancelBtnText: { ...textStyles.button, fontSize: 14, color: colors.error },
+  chooseBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  chooseBtnText: { ...textStyles.button, fontSize: 14, color: colors.white },
   content: { padding: spacing.lg, maxWidth: 900, width: '100%', alignSelf: 'center', gap: spacing.md },
   backRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   backText: { ...textStyles.caption, color: colors.textSecondary },

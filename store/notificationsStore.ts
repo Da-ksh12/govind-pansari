@@ -88,13 +88,20 @@ export const useNotificationsStore = create<NotificationsState>()((set, get) => 
 
   startRealtime: (userId) => {
     get().unsubscribeRealtime?.();
-    const unsubscribe = notificationRepository.subscribe(userId, (row) => {
-      set((s) => ({
-        items: [row, ...s.items],
-        unreadCount: s.unreadCount + 1,
-        incoming: row,
-      }));
-    });
+    const unsubscribe = notificationRepository.subscribe(
+      userId,
+      (row) => {
+        set((s) => {
+          // A reload (resync) can already have fetched this row: never show or count it twice.
+          if (s.items.some((item) => item.id === row.id)) return s;
+          return { items: [row, ...s.items], unreadCount: s.unreadCount + 1, incoming: row };
+        });
+      },
+      () => {
+        if (get().loaded) get().refresh();
+        get().refreshUnreadCount();
+      },
+    );
     set({ unsubscribeRealtime: unsubscribe });
   },
 

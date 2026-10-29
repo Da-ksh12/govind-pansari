@@ -22,6 +22,7 @@ import { categoryRepository } from '../../services/repositories/categoryReposito
 import { bannerRepository } from '../../services/repositories/bannerRepository';
 import { useAuthStore } from '../../store/authStore';
 import { useNotificationsStore } from '../../store/notificationsStore';
+import { useLocationRevalidation } from '../../hooks/useLocationRevalidation';
 import { categoryImg } from '../../data/images';
 
 const WIDE_BREAKPOINT = 900;
@@ -33,6 +34,8 @@ export default function HomeScreen() {
   const unreadCount = useNotificationsStore((s) => s.unreadCount);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
+  // Home's delivery status comes from the server on every open / foreground, never from a stored answer.
+  useLocationRevalidation();
 
   const { data, loading, error, reload } = useAsync(async () => {
     const [categories, needTags, bestsellers, premium, newArrivals, giftHampers, healthyPicks, banners] =
@@ -69,9 +72,13 @@ export default function HomeScreen() {
   // sit on the loading skeleton forever (this exact gap once hid a real
   // backend bug — a bad column reference in productRepository — as a
   // silently-stuck-loading home screen on every platform).
+  // The header (delivery location, cart, notifications) is part of Home in every state — loading and failed included.
+  const header = !isWide ? <LocationHeader avatarUrl={profile?.avatarUrl} unreadNotifications={unreadCount} /> : null;
+
   if (error && !data) {
     return (
       <SafeScreen>
+        {header}
         <EmptyState
           icon={WifiOff}
           title="Couldn't load the home screen"
@@ -86,7 +93,8 @@ export default function HomeScreen() {
   if (loading || !data) {
     return (
       <SafeScreen>
-        <HomeSkeleton />
+        {header}
+        <HomeSkeleton showHeader={isWide} />
       </SafeScreen>
     );
   }
@@ -114,7 +122,7 @@ export default function HomeScreen() {
               this mobile row too would just duplicate it. */}
           {!isWide && (
             <>
-              <LocationHeader avatarUrl={profile?.avatarUrl} unreadNotifications={unreadCount} />
+              {header}
               <SearchBar />
             </>
           )}

@@ -15,6 +15,7 @@ interface RatableItem {
   productId: string;
   name: string;
   image: string;
+  fallbackImage?: string;
 }
 
 function Row({ item }: { item: RatableItem }) {
@@ -61,7 +62,7 @@ function Row({ item }: { item: RatableItem }) {
   if (checking) {
     return (
       <View style={styles.row}>
-        <AppImage uri={item.image} style={styles.thumb} contentFit="cover" kind="product" />
+        <AppImage uri={item.image} fallbackUri={item.fallbackImage} style={styles.thumb} contentFit="cover" kind="product" />
         <View style={{ flex: 1, alignItems: 'center' }}>
           <BrandedLoader />
         </View>
@@ -71,7 +72,7 @@ function Row({ item }: { item: RatableItem }) {
 
   return (
     <View style={styles.row}>
-      <AppImage uri={item.image} style={styles.thumb} contentFit="cover" kind="product" />
+      <AppImage uri={item.image} fallbackUri={item.fallbackImage} style={styles.thumb} contentFit="cover" kind="product" />
       <View style={{ flex: 1 }}>
         <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
         {submitted ? (
@@ -123,7 +124,7 @@ export function PostDeliveryReview({ items }: { items: OrderItem[] }) {
     for (const item of items) {
       if (seen.has(item.productId)) continue;
       seen.add(item.productId);
-      out.push({ productId: item.productId, name: item.name, image: item.image });
+      out.push({ productId: item.productId, name: item.name, image: item.image, fallbackImage: item.fallbackImage });
     }
     return out;
   }, [items]);
