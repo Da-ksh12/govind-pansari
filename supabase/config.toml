@@ -413,3 +413,18 @@ enabled = true
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# Razorpay calls this with its own X-Razorpay-Signature, not a Supabase JWT;
+# the function verifies that signature itself and refuses everything else.
+[functions.razorpay-webhook]
+verify_jwt = false
+
+# Supabase Auth calls the Send SMS hook signed with the hook secret (Standard
+# Webhooks), not with a Supabase JWT; the function verifies that signature itself.
+[functions.send-sms-hook]
+verify_jwt = false
+
+# Fast2SMS posts delivery reports with no Supabase JWT; the function requires the
+# shared token in the URL and can only update sms_delivery_log.
+[functions.fast2sms-dlr]
+verify_jwt = false

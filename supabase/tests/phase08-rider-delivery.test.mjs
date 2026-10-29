@@ -276,14 +276,19 @@ await check('10. get_eligible_riders_for_order excludes the at-capacity rider an
 });
 
 let order2, assignment2;
-await check('11. auto_assign_rider picks the only eligible (free, same-store) rider', async () => {
+await check('11. automatic assignment is switched off; a manager picks the free rider by hand', async () => {
   order2 = await fullyPackOrder();
-  const { status, body } = await rpc(manager1Headers, 'auto_assign_rider', { p_order_id: order2 });
+  // Riders are assigned only by a person choosing one (migration 20260827000017).
+  const auto = await rpc(manager1Headers, 'auto_assign_rider', { p_order_id: order2 });
+  assert(auto.status >= 400, `auto_assign_rider must be refused, got ${auto.status}`);
+  const autoStart = await rpc(manager1Headers, 'start_auto_assignment', { p_order_id: order2 });
+  assert(autoStart.status >= 400, `start_auto_assignment must be refused, got ${autoStart.status}`);
+  const { status, body } = await rpc(manager1Headers, 'assign_rider', { p_order_id: order2, p_rider_id: rider2Row.id });
   assert(status === 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
   assignment2 = body;
   const row = (await fetch(`${REST}/delivery_assignments?id=eq.${assignment2}&select=rider_id,assignment_source`, { headers: manager1Headers }).then((r) => r.json()))[0];
   assert(row.rider_id === rider2Row.id, `expected rider2 (the only free rider), got ${row.rider_id}`);
-  assert(row.assignment_source === 'auto', `expected source auto, got ${row.assignment_source}`);
+  assert(row.assignment_source === 'manual', `expected source manual, got ${row.assignment_source}`);
 });
 
 // ---------------------------------------------------------------------

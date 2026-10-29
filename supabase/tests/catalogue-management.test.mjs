@@ -76,6 +76,9 @@ const DRY_FRUITS_CATEGORY = '00000000-0000-0000-0000-000000000201';
 const STORE_A = '00000000-0000-0000-0000-000000000101';
 const STORE_B = '00000000-0000-0000-0000-000000000102';
 const rand = Math.random().toString(36).slice(2, 8);
+// A product photo is mandatory (migration 20260827000011), so every payload below carries one;
+// that way each rejection test still fails for the reason it names, not for a missing photo.
+const TEST_IMAGE = 'https://example.com/test-photo.jpg';
 
 let createdProductId = null;
 let createdVariantIds = [];
@@ -83,7 +86,7 @@ let createdCategoryId = null;
 
 await check('1. Customer cannot call admin_create_product_full', async () => {
   const r = await rpc(customerHeaders, 'admin_create_product_full', {
-    p_product: { name: 'Hack Attempt', slug: `hack-${rand}` },
+    p_product: { name: 'Hack Attempt', slug: `hack-${rand}`, image: TEST_IMAGE },
     p_variants: [{ sku: `HACK-${rand}`, weight_value: 500, weight_unit: 'g', price: 1, mrp: 1 }],
   });
   assert(r.status >= 400, `expected rejection, got ${r.status}`);
@@ -91,7 +94,7 @@ await check('1. Customer cannot call admin_create_product_full', async () => {
 
 await check('2. A scoped admin WITHOUT products.create (delivery_manager) cannot create a product', async () => {
   const r = await rpc(deliveryManagerHeaders, 'admin_create_product_full', {
-    p_product: { name: 'Should Fail', slug: `should-fail-${rand}` },
+    p_product: { name: 'Should Fail', slug: `should-fail-${rand}`, image: TEST_IMAGE },
     p_variants: [{ sku: `SF-${rand}`, weight_value: 500, weight_unit: 'g', price: 1, mrp: 1 }],
   });
   assert(r.status >= 400, `expected rejection, got ${r.status}`);
@@ -100,7 +103,7 @@ await check('2. A scoped admin WITHOUT products.create (delivery_manager) cannot
 await check('3. inventory_manager (has products.create) can create a product with 2 variants + inventory in one call', async () => {
   const r = await rpc(invManagerHeaders, 'admin_create_product_full', {
     p_product: {
-      name: 'Test California Almonds', slug: `test-california-almonds-${rand}`,
+      name: 'Test California Almonds', slug: `test-california-almonds-${rand}`, image: TEST_IMAGE,
       category_id: DRY_FRUITS_CATEGORY, short_description: 'Test product', tags: ['premium'], is_featured: true,
     },
     p_variants: [
@@ -132,7 +135,7 @@ await check('4. The created product + variants + inventory are real rows, readab
 await check('5. Duplicate SKU within the same creation payload rolls back the WHOLE product (no half-created row)', async () => {
   const dupeSku = `DUPE-${rand}`;
   const r = await rpc(invManagerHeaders, 'admin_create_product_full', {
-    p_product: { name: 'Rollback Test', slug: `rollback-test-${rand}` },
+    p_product: { name: 'Rollback Test', slug: `rollback-test-${rand}`, image: TEST_IMAGE },
     p_variants: [
       { sku: dupeSku, weight_value: 100, weight_unit: 'g', price: 10, mrp: 12 },
       { sku: dupeSku, weight_value: 200, weight_unit: 'g', price: 20, mrp: 24 }, // same SKU twice
@@ -145,7 +148,7 @@ await check('5. Duplicate SKU within the same creation payload rolls back the WH
 
 await check('6. Creating a product with a SKU that already exists elsewhere is rejected', async () => {
   const r = await rpc(invManagerHeaders, 'admin_create_product_full', {
-    p_product: { name: 'Existing SKU Test', slug: `existing-sku-test-${rand}` },
+    p_product: { name: 'Existing SKU Test', slug: `existing-sku-test-${rand}`, image: TEST_IMAGE },
     p_variants: [{ sku: `TCA-250G-${rand}`, weight_value: 250, weight_unit: 'g', price: 1, mrp: 2 }], // reuses variant 0's SKU from check 3
   });
   assert(r.status >= 400, `expected rejection, got ${r.status}`);
@@ -153,7 +156,7 @@ await check('6. Creating a product with a SKU that already exists elsewhere is r
 
 await check('7. Invalid MRP (< price) is rejected', async () => {
   const r = await rpc(invManagerHeaders, 'admin_create_product_full', {
-    p_product: { name: 'Bad MRP', slug: `bad-mrp-${rand}` },
+    p_product: { name: 'Bad MRP', slug: `bad-mrp-${rand}`, image: TEST_IMAGE },
     p_variants: [{ sku: `BADMRP-${rand}`, weight_value: 100, weight_unit: 'g', price: 100, mrp: 50 }],
   });
   assert(r.status >= 400, `expected rejection, got ${r.status}`);
@@ -162,7 +165,7 @@ await check('7. Invalid MRP (< price) is rejected', async () => {
 await check('8. admin_update_product updates fields and writes an audit_logs row', async () => {
   const r = await rpc(invManagerHeaders, 'admin_update_product', {
     p_product_id: createdProductId,
-    p_product: { name: 'Test California Almonds (Updated)', category_id: DRY_FRUITS_CATEGORY, is_featured: false, is_bestseller: true },
+    p_product: { name: 'Test California Almonds (Updated)', category_id: DRY_FRUITS_CATEGORY, is_featured: false, is_bestseller: true, image: TEST_IMAGE },
   });
   assert(r.status === 200 && r.body?.success, `update failed: ${r.status} ${JSON.stringify(r.body)}`);
   const prod = await fetch(`${REST}/products?id=eq.${createdProductId}&select=name,is_bestseller`, { headers: svcHeaders }).then((r2) => r2.json());
@@ -239,6 +242,28 @@ await check('16. admin_update_category rejects a category being set as its own p
 await check('17. Customer cannot call admin_create_category', async () => {
   const r = await rpc(customerHeaders, 'admin_create_category', { p_name: 'Hack Category', p_slug: `hack-cat-${rand}` });
   assert(r.status >= 400, `expected rejection, got ${r.status}`);
+});
+
+await check('A. Creating a product with no photo is rejected by the database', async () => {
+  for (const image of [undefined, '', '   ']) {
+    const r = await rpc(invManagerHeaders, 'admin_create_product_full', {
+      p_product: { name: 'No Photo', slug: `no-photo-${rand}`, image },
+      p_variants: [{ sku: `NOPHOTO-${rand}`, weight_value: 100, weight_unit: 'g', price: 10, mrp: 12 }],
+    });
+    assert(r.status >= 400 && /photo is required/i.test(JSON.stringify(r.body)), `expected "photo is required", got ${r.status} ${JSON.stringify(r.body)}`);
+  }
+  const found = await fetch(`${REST}/products?slug=eq.no-photo-${rand}&select=id`, { headers: svcHeaders }).then((r2) => r2.json());
+  assert(found.length === 0, 'a photo-less product row was created');
+});
+
+await check('B. An existing product cannot have its photo removed', async () => {
+  const r = await rpc(invManagerHeaders, 'admin_update_product', {
+    p_product_id: createdProductId,
+    p_product: { name: 'Test California Almonds (Updated)', category_id: DRY_FRUITS_CATEGORY, image: null },
+  });
+  assert(r.status >= 400 && /photo is required/i.test(JSON.stringify(r.body)), `expected "photo is required", got ${r.status} ${JSON.stringify(r.body)}`);
+  const prod = await fetch(`${REST}/products?id=eq.${createdProductId}&select=image`, { headers: svcHeaders }).then((r2) => r2.json());
+  assert(prod[0].image === TEST_IMAGE, 'the stored photo changed');
 });
 
 // Cleanup: restore the delivery_manager test account, and fully delete
