@@ -1,0 +1,234 @@
+@import 'tailwindcss';
+
+/*
+ * Govind Pansari design tokens.
+ * The colours are copied from the mobile app (theme/colors.ts) so the website and the app are one brand: ivory background, deep burgundy,
+ * a restrained gold. Do not add blue, purple or neon; every new colour must read as "premium Indian food heritage".
+ */
+@theme {
+  --color-ivory: #fbf3e6;
+  --color-ivory-deep: #f6ead8;
+  --color-cream: #fbf6ef;
+  --color-sand: #f3e9d9;
+  --color-paper: #ffffff;
+
+  --color-maroon: #6e1423;
+  --color-maroon-dark: #4a0d18;
+  --color-maroon-darker: #33090f;
+  --color-maroon-tint: #f3e2e0;
+  --color-maroon-light: #fbeaea;
+
+  --color-gold: #c69a4c;
+  /* darkened from #a87f38 so gold text reads at 5:1 on the ivory and sand backgrounds (WCAG AA needs 4.5:1) */
+  --color-gold-dark: #7f5f1d;
+  --color-gold-tint: #f7ecd6;
+
+  --color-espresso: #241512;
+  /* secondary text: darkened from #7c6f65 (4.4:1) to pass WCAG AA on ivory, sand and white */
+  --color-taupe: #6a5e55;
+  --color-stone: #756a60;
+  --color-line: #eae0ce;
+  --color-line-strong: #dccbaf;
+
+  --color-forest: #355e3b;
+  --color-forest-tint: #e4eee2;
+  --color-terracotta: #b3502c;
+  --color-terracotta-tint: #f6e3d6;
+  --color-danger: #b3202c;
+
+  --font-display: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  --font-sans: var(--font-jakarta), 'Plus Jakarta Sans', system-ui, sans-serif;
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-2xl: 28px;
+
+  /* warm-tinted shadows, never pure black */
+  --shadow-soft: 0 1px 2px rgb(61 36 24 / 0.05), 0 8px 24px rgb(61 36 24 / 0.07);
+  --shadow-lift: 0 2px 4px rgb(61 36 24 / 0.06), 0 18px 40px rgb(61 36 24 / 0.13);
+  --shadow-pill: 0 6px 30px rgb(61 36 24 / 0.12);
+
+  --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-ivory);
+    color: var(--color-espresso);
+    font-family: var(--font-sans);
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  p { text-wrap: pretty; }
+  ::selection { background: var(--color-maroon); color: var(--color-ivory); }
+
+  /* one visible focus ring everywhere, for keyboard users only */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-dark);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  img { max-width: 100%; }
+}
+
+@layer components {
+  .container-x {
+    width: min(100% - 2rem, 80rem);
+    margin-inline: auto;
+  }
+  @media (min-width: 768px) {
+    .container-x { width: min(100% - 4rem, 80rem); }
+  }
+
+  /* small gold capitals above headings: "SINCE 1950 · AGRA" */
+  .eyebrow {
+    font-family: var(--font-sans);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-gold-dark);
+  }
+
+  .section-pad { padding-block: clamp(3.5rem, 8vw, 7rem); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 3rem;
+    padding: 0 1.6rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.92rem;
+    letter-spacing: 0.01em;
+    transition: transform 0.35s var(--ease-premium), background-color 0.25s, color 0.25s, box-shadow 0.35s var(--ease-premium), border-color 0.25s;
+    white-space: nowrap;
+  }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn-primary { background: var(--color-maroon); color: var(--color-ivory); box-shadow: 0 8px 22px rgb(110 20 35 / 0.28); }
+  .btn-primary:hover:not(:disabled) { background: var(--color-maroon-dark); box-shadow: 0 12px 28px rgb(110 20 35 / 0.34); }
+  .btn-primary:disabled { background: var(--color-stone); box-shadow: none; }
+  .btn-ghost { background: transparent; color: var(--color-maroon); border: 1.5px solid var(--color-maroon); }
+  .btn-ghost:hover:not(:disabled) { background: var(--color-maroon); color: var(--color-ivory); }
+  .btn-gold { background: var(--color-gold); color: var(--color-maroon-darker); }
+  .btn-gold:hover:not(:disabled) { background: var(--color-gold-dark); color: var(--color-ivory); }
+  .btn-light { background: var(--color-ivory); color: var(--color-maroon); }
+  .btn-light:hover:not(:disabled) { background: var(--color-paper); }
+  .btn-sm { min-height: 2.5rem; padding: 0 1.1rem; font-size: 0.82rem; }
+
+  .field {
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1.5px solid var(--color-line-strong);
+    background: var(--color-paper);
+    color: var(--color-espresso);
+    font-size: 1rem; /* 16px: stops iOS zooming into the field */
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .field::placeholder { color: var(--color-stone); }
+  .field:focus { outline: none; border-color: var(--color-maroon); box-shadow: 0 0 0 4px rgb(110 20 35 / 0.1); }
+  .field[aria-invalid='true'] { border-color: var(--color-danger); }
+
+  /* the gold hairline used between editorial sections */
+  .rule-gold { height: 1px; background: linear-gradient(90deg, transparent, var(--color-gold) 30%, var(--color-gold) 70%, transparent); border: 0; }
+
+  /* the arch: a tall frame with a semicircular top, the motif of Agra's jharokhas */
+  .arch { border-radius: 999px 999px var(--radius-2xl) var(--radius-2xl); overflow: hidden; }
+
+  /* a skeleton shimmer in the brand's own colours */
+  .skeleton {
+    background: linear-gradient(100deg, #efe3d0 30%, #f8f1e4 50%, #efe3d0 70%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: var(--radius-md);
+  }
+}
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes floaty { 0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); } 50% { transform: translateY(-10px) rotate(var(--r, 0deg)); } }
+@keyframes almond-flow { 0% { transform: translateX(-30%) rotate(0deg); opacity: 0; } 15%, 85% { opacity: 1; } 100% { transform: translateX(130%) rotate(360deg); opacity: 0; } }
+
+/* Everything that moves stops moving for people who ask their device for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* No horizontal scroll bars on touch rails, but the rail still scrolls and snaps. In a layer so Tailwind utilities (md:grid ...) can override it. */
+@layer components {
+  .rail { display: flex; gap: 1rem; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .rail::-webkit-scrollbar { display: none; }
+  .rail > * { scroll-snap-align: start; flex: none; }
+}
+
+/* ---- welcome splash: hidden unless the inline script in <head> switches it on ---- */
+#splash {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  place-items: center;
+  background: radial-gradient(circle at 50% 40%, var(--color-maroon) 0%, var(--color-maroon-darker) 70%);
+  transition: opacity 0.5s var(--ease-premium);
+}
+html[data-splash='on'] #splash,
+html[data-splash='leaving'] #splash {
+  display: grid;
+  /* the safety net: even with no JavaScript the splash removes itself */
+  animation: splash-safety 0.4s ease 2.6s forwards;
+}
+html[data-splash='leaving'] #splash { opacity: 0; pointer-events: none; }
+html[data-splash='off'] #splash { display: none; }
+.splash-inner { display: flex; flex-direction: column; align-items: center; text-align: center; animation: splash-in 0.9s var(--ease-premium) both; }
+.splash-line { display: block; width: 0; height: 1px; margin-top: 1.4rem; background: var(--color-gold); animation: splash-line 1s 0.2s var(--ease-premium) forwards; }
+@keyframes splash-in { from { opacity: 0; transform: translateY(14px) scale(0.94); } to { opacity: 1; transform: none; } }
+@keyframes splash-line { to { width: 9rem; } }
+@keyframes splash-safety { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+
+/* pages that do not start with a full-bleed hero leave room for the floating header */
+.page-top { padding-top: 7rem; }
+@media (min-width: 640px) { .page-top { padding-top: 8rem; } }
+
+/* page transition: each page eases in; plain CSS so it works before (and without) JavaScript */
+/* fill-mode backwards (not both): a lingering transform would make this wrapper the containing block for position:fixed descendants, which breaks GSAP pinning */
+.page-in { animation: page-in 0.55s var(--ease-premium) backwards; }
+@keyframes page-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+/* hero entrance: plain CSS, so the headline is on screen from the first paint; waits for the welcome splash when it is showing */
+html { --splash-delay: 0s; }
+html[data-splash='on'] { --splash-delay: 1.1s; }
+.rise { animation: rise 0.95s var(--ease-premium) backwards; animation-delay: calc(var(--d, 0s) + var(--splash-delay)); }
+@keyframes rise { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+.arch-in { animation: arch-in 1.2s var(--ease-premium) backwards; animation-delay: calc(var(--d, 0s) + var(--splash-delay)); }
+@keyframes arch-in { from { opacity: 0; transform: translateY(70px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+
+/* a faint jaali (lattice) pattern, the carved stone screens of Agra, drawn as an inline SVG */
+.jaali {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64' fill='none' stroke='%23c69a4c' stroke-width='1'%3E%3Cpath d='M32 4l28 28-28 28L4 32z'/%3E%3Ccircle cx='32' cy='32' r='9'/%3E%3Cpath d='M0 0l8 8M64 0l-8 8M0 64l8-8M64 64l-8-8'/%3E%3C/svg%3E");
+  background-size: 64px 64px;
+}

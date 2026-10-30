@@ -53,3 +53,10 @@ yarn-error.*
 modules/*/android/build/
 modules/*/android/.cxx/
 modules/*/android/.gradle/
+
+# The online store (./website) is a separate Next.js project; its generated folders are never committed
+/website/node_modules/
+/website/.next/
+/website/.screens/
+# the zip prepared for uploading the website to the host
+/deploy/
