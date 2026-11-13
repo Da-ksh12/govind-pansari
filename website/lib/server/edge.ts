@@ -18,7 +18,7 @@ export function isSameOrigin(request: Request): boolean {
   }
 }
 
-export async function callEdgeFunction(name: 'create-razorpay-order' | 'verify-razorpay-payment', body: Record<string, string>): Promise<NextResponse> {
+export async function callEdgeFunction(name: 'create-razorpay-order' | 'verify-razorpay-payment' | 'delete-account', body: Record<string, string>): Promise<NextResponse> {
   const supabase = await serverClient();
   // getUser() asks Supabase to verify (and, if needed, refresh) the session; only then is the token read.
   const { data: auth } = await supabase.auth.getUser();

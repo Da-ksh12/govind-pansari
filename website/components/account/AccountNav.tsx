@@ -1,6 +1,6 @@
 'use client';
 
-import { Heart, LogOut, MapPin, Package, User, UserCircle } from 'lucide-react';
+import { Heart, LogOut, MapPin, Package, Trash2, User, UserCircle } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '../providers/AuthProvider';
@@ -11,6 +11,7 @@ const ITEMS = [
   { href: '/account/addresses', label: 'Addresses', icon: MapPin },
   { href: '/account/wishlist', label: 'Wishlist', icon: Heart },
   { href: '/account/profile', label: 'Profile', icon: User },
+  { href: '/account/delete', label: 'Delete account', icon: Trash2 },
 ] as const;
 
 export function AccountNav() {

@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   Star,
+  Trash2,
   User as UserIcon,
 } from 'lucide-react-native';
 import { colors, radius, shadows, spacing, textStyles } from '../../theme';
@@ -185,6 +186,11 @@ export default function ProfileScreen() {
           <Text style={styles.logoutText}>Logout</Text>
         </Pressable>
 
+        <Pressable style={styles.deleteRow} onPress={() => router.push('/profile/delete-account' as never)}>
+          <Trash2 size={ICON_SIZE.sm} color={colors.textMuted} strokeWidth={ICON_STROKE} />
+          <Text style={styles.deleteText}>Delete Account</Text>
+        </Pressable>
+
         <View style={{ height: 140 }} />
       </ScrollView>
     </SafeScreen>
@@ -263,4 +269,6 @@ const styles = StyleSheet.create({
   listSubtitle: { ...textStyles.caption, color: colors.textSecondary, marginTop: 1 },
   logoutRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, justifyContent: 'center', marginTop: spacing.xl, padding: spacing.md },
   logoutText: { ...textStyles.button, color: colors.error, fontSize: 15 },
+  deleteRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, justifyContent: 'center', padding: spacing.md },
+  deleteText: { ...textStyles.bodySmall, color: colors.textMuted, textDecorationLine: 'underline' },
 });

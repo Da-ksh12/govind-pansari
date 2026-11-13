@@ -65,6 +65,7 @@ export const FOOTER_LINKS = {
   company: [
     { href: '/about', label: 'Our story' },
     { href: '/privacy', label: 'Privacy policy' },
+    { href: '/delete-account', label: 'Delete account' },
     { href: '/terms', label: 'Terms of service' },
   ],
 } as const;

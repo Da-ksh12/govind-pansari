@@ -19,12 +19,12 @@ const ROUTES = [
   '/', '/shop', '/shop?q=almond', '/shop?category=dry-fruits&sort=price-asc', '/shop?page=2', '/shop?min=300&max=700&stock=1',
   ...livePaths('/category/', 2), ...livePaths('/product/', 3),
   '/collections', ...livePaths('/collections/', 1), '/gift-hampers', '/bestsellers', '/offers',
-  '/about', '/contact', '/faq', '/shipping', '/refunds', '/privacy', '/terms',
+  '/about', '/contact', '/faq', '/shipping', '/refunds', '/privacy', '/delete-account', '/delete-account/done', '/terms',
   '/cart', '/login', '/login?next=/checkout',
   '/sitemap.xml', '/robots.txt', '/does-not-exist', '/product/not-a-product', '/category/nope',
 ];
 // these must send a signed-out visitor to the sign-in page
-const PROTECTED = ['/checkout', '/account', '/account/orders', '/account/addresses', '/account/wishlist', '/account/profile'];
+const PROTECTED = ['/checkout', '/account', '/account/orders', '/account/addresses', '/account/wishlist', '/account/profile', '/account/delete'];
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const rows = [];

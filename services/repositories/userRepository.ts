@@ -48,6 +48,21 @@ export class NotSignedInError extends Error {
 
 export const userRepository = {
   /**
+   * Deletes the signed-in customer's own account (Google Play / App Store requirement). The `delete-account` edge function removes the
+   * personal data, strips names and addresses from old orders and closes the sign-in. It answers in plain words (e.g. an order still on its
+   * way), which are passed on as the error message. The caller signs out afterwards.
+   */
+  async deleteAccount(): Promise<void> {
+    const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
+    if (error) {
+      const response = (error as { context?: Response }).context;
+      const detail = response && typeof response.clone === 'function' ? await response.clone().json().catch(() => null) : null;
+      throw new Error(typeof detail?.error === 'string' ? detail.error : "We couldn't delete your account. Please check your connection and try again.");
+    }
+    if (!(data as { success?: boolean } | null)?.success) throw new Error("We couldn't delete your account. Please try again.");
+  },
+
+  /**
    * The signed-in user's profile. Pass `userId` when the caller already has it (the auth listener does): the id then costs no
    * request at all, where `auth.getUser()` is a server round trip that fails on a weak connection before the profile is even asked for.
    */
