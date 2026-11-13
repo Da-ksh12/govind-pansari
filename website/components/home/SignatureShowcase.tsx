@@ -70,6 +70,9 @@ export function SignatureShowcase({ items }: { items: ShowcaseItem[] }) {
   }, []);
 
   return (
+    // GSAP's pin moves the pinned section into a wrapper of its own. This outer div stays where React put it, so when the page is left React
+    // removes THIS node (always a child of its parent) rather than trying to remove a section that GSAP has already moved.
+    <div>
     <section ref={root} className="relative overflow-hidden bg-maroon-darker text-ivory" aria-labelledby="sig-title">
       <div className="jaali pointer-events-none absolute inset-0 opacity-[0.06]" aria-hidden />
       <div className="container-x relative grid min-h-[100svh] items-center gap-14 py-24 lg:grid-cols-[0.9fr_1.1fr]">
@@ -113,5 +116,6 @@ export function SignatureShowcase({ items }: { items: ShowcaseItem[] }) {
         </div>
       </div>
     </section>
+    </div>
   );
 }

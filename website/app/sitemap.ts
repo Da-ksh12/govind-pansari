@@ -9,7 +9,7 @@ export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
-  const fixed = ['/', '/shop', '/collections', '/gift-hampers', '/offers', '/bestsellers', '/about', '/contact', '/faq', '/shipping', '/refunds', '/privacy', '/terms'];
+  const fixed = ['/', '/app', '/shop', '/collections', '/gift-hampers', '/offers', '/bestsellers', '/about', '/contact', '/faq', '/shipping', '/refunds', '/privacy', '/terms'];
   const entries: MetadataRoute.Sitemap = fixed.map((path) => ({ url: absoluteUrl(path), lastModified: now, changeFrequency: path === '/' ? 'daily' : 'weekly', priority: path === '/' ? 1 : 0.6 }));
 
   try {

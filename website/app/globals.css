@@ -232,3 +232,53 @@ html[data-splash='on'] { --splash-delay: 1.1s; }
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64' fill='none' stroke='%23c69a4c' stroke-width='1'%3E%3Cpath d='M32 4l28 28-28 28L4 32z'/%3E%3Ccircle cx='32' cy='32' r='9'/%3E%3Cpath d='M0 0l8 8M64 0l-8 8M0 64l8-8M64 64l-8-8'/%3E%3C/svg%3E");
   background-size: 64px 64px;
 }
+
+/* ---------------------------------------------------------------------------------------------------------------------------------------
+ * App-download page (/app)
+ * ------------------------------------------------------------------------------------------------------------------------------------- */
+
+/* the picture that holds the phone, the photo and the cloth: everything inside is sized in cqw, so it scales as one piece */
+.gp-stage { container-type: inline-size; }
+
+.gp-phone {
+  position: relative;
+  width: 44cqw;
+  padding: 1.5cqw;
+  border-radius: 7.6cqw;
+  background: linear-gradient(145deg, #4a4540 0%, #1b1815 42%, #2c2723 100%);
+  box-shadow:
+    0 0 0 0.25cqw #0d0b0a,
+    inset 0 0 0 0.3cqw rgb(255 255 255 / 0.1),
+    0 4cqw 7cqw -2cqw rgb(51 9 15 / 0.45),
+    0 1.2cqw 2.4cqw -0.6cqw rgb(51 9 15 / 0.3);
+}
+.gp-phone-screen {
+  position: relative;
+  aspect-ratio: 1179 / 2556; /* the screenshot's own proportions: nothing is cropped or stretched */
+  overflow: hidden;
+  border-radius: 6.1cqw;
+  background: var(--color-ivory);
+}
+.gp-phone-island {
+  position: absolute;
+  top: 1.5cqw;
+  left: 50%;
+  width: 11.5cqw;
+  height: 3.3cqw;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #080706;
+}
+.gp-phone-glare {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0) 34%);
+  pointer-events: none;
+}
+.gp-phone-button { position: absolute; width: 0.7cqw; border-radius: 0.4cqw; background: #2a2521; }
+.gp-phone-button--volume { left: -0.6cqw; top: 19cqw; height: 7cqw; box-shadow: 0 8.5cqw 0 #2a2521; }
+.gp-phone-button--power { right: -0.6cqw; top: 25cqw; height: 11cqw; }
+
+/* one gentle entrance for the page's main blocks; nothing loops */
+@keyframes gp-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.gp-rise { animation: gp-rise 0.9s var(--ease-premium) backwards; animation-delay: var(--d, 0s); }

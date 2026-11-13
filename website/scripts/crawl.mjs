@@ -15,6 +15,7 @@ function livePaths(prefix, count) {
 }
 
 const ROUTES = [
+  '/app',
   '/', '/shop', '/shop?q=almond', '/shop?category=dry-fruits&sort=price-asc', '/shop?page=2', '/shop?min=300&max=700&stock=1',
   ...livePaths('/category/', 2), ...livePaths('/product/', 3),
   '/collections', ...livePaths('/collections/', 1), '/gift-hampers', '/bestsellers', '/offers',
