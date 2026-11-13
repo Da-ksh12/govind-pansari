@@ -38,7 +38,7 @@ export default async function HomePage() {
           '@type': 'Organization',
           name: BRAND.name,
           url: absoluteUrl('/'),
-          logo: absoluteUrl('/brand/seal.webp'),
+          logo: absoluteUrl('/brand/logo-square.png'),
           foundingDate: String(BRAND.since),
           address: { '@type': 'PostalAddress', addressLocality: BRAND.city, addressRegion: 'Uttar Pradesh', addressCountry: 'IN' },
         }}

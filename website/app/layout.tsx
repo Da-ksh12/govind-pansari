@@ -23,8 +23,16 @@ export const metadata: Metadata = {
   title: { default: `${BRAND.name} — ${BRAND.tagline}`, template: `%s | ${BRAND.name}` },
   description: BRAND.description,
   applicationName: BRAND.name,
-  openGraph: { type: 'website', siteName: BRAND.name, locale: 'en_IN', title: `${BRAND.name} — ${BRAND.tagline}`, description: BRAND.description },
-  twitter: { card: 'summary_large_image' },
+  // the picture shown when a link to any page is shared (WhatsApp, Facebook, Google...); pages with their own picture (products) override it
+  openGraph: {
+    type: 'website',
+    siteName: BRAND.name,
+    locale: 'en_IN',
+    title: `${BRAND.name} — ${BRAND.tagline}`,
+    description: BRAND.description,
+    images: [{ url: '/brand/og-image.png', width: 1200, height: 630, alt: `${BRAND.name} — Dry Fruits & Spices` }],
+  },
+  twitter: { card: 'summary_large_image', images: ['/brand/og-image.png'] },
   alternates: { canonical: '/' },
 };
 

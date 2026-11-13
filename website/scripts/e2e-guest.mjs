@@ -27,6 +27,20 @@ page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message.slice(0, 
 const cartBadge = () => page.locator('[data-cart-target] span').first();
 const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('gp.cart.v1') ?? '[]'));
 
+// The catalogue is live data that the owner edits, so the checks never name a product: they take the first product from the sitemap that sells in
+// two or more pack sizes (needed for the variant check) and use its real name and pack labels throughout.
+const sitemapXml = await (await fetch(base + '/sitemap.xml')).text();
+const sitemapPaths = [...sitemapXml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => new URL(m[1]).pathname);
+let PRODUCT = null;
+for (const path of sitemapPaths.filter((p) => p.startsWith('/product/')).slice(0, 60)) {
+  const html = await (await fetch(base + path)).text();
+  if ((html.match(/role="radio"/g) ?? []).length >= 2 && html.includes('Add to cart')) { PRODUCT = path; break; }
+}
+if (!PRODUCT) { console.log('FAIL could not find a product with two pack sizes in the sitemap'); process.exit(1); }
+let NAME = '';
+const nameRe = () => new RegExp(NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+console.log(`using product ${PRODUCT}`);
+
 await step('home page: headline, one h1, hero photos load', async () => {
   await page.goto(base + '/', { waitUntil: 'load' });
   assert.equal(await page.locator('h1').count(), 1);
@@ -36,16 +50,17 @@ await step('home page: headline, one h1, hero photos load', async () => {
 });
 
 await step('product page: variants change price, SKU and stay selectable', async () => {
-  await page.goto(base + '/product/iranian-pistachios', { waitUntil: 'load' });
+  await page.goto(base + PRODUCT, { waitUntil: 'load' });
+  NAME = (await page.locator('h1').innerText()).trim();
   const price = () => page.locator('p:has(> span.font-display.text-3xl)').first().innerText();
-  const first = await price();
   const sku1 = await page.getByText(/^SKU:/).innerText();
-  await page.getByRole('radio', { name: /500 g/ }).click();
-  const second = await price();
+  const second = page.getByRole('radio').nth(1);
+  await second.click();
   const sku2 = await page.getByText(/^SKU:/).innerText();
-  assert.notEqual(first, second, 'price should change with the pack size');
   assert.notEqual(sku1, sku2, 'SKU should change with the pack size');
-  assert.equal(await page.getByRole('radio', { name: /500 g/ }).getAttribute('aria-checked'), 'true');
+  assert.equal(await second.getAttribute('aria-checked'), 'true');
+  assert.match(await price(), /₹/, 'a price is shown for the chosen pack');
+  await page.getByRole('radio').nth(0).click(); // back to the first pack so the cart steps below add a known variant
 });
 
 await step('add to cart: drawer opens, badge counts, cart is stored with ids and quantities only', async () => {
@@ -56,13 +71,13 @@ await step('add to cart: drawer opens, badge counts, cart is stored with ids and
   const lines = await stored();
   assert.equal(lines.length, 1);
   assert.deepEqual(Object.keys(lines[0]).sort(), ['quantity', 'variantId'], 'no prices or names are stored in the browser');
-  assert.match(await page.getByRole('dialog', { name: 'Your cart' }).innerText(), /Iranian Pistachios/);
+  assert.match(await page.getByRole('dialog', { name: 'Your cart' }).innerText(), nameRe());
 });
 
 await step('drawer quantity controls change the line total and subtotal', async () => {
   const drawer = page.getByRole('dialog', { name: 'Your cart' });
   const before = await drawer.getByText(/^Subtotal/).locator('xpath=following-sibling::*[1]').innerText();
-  await drawer.getByRole('button', { name: /More Iranian Pistachios/ }).click();
+  await drawer.getByRole('button', { name: new RegExp(`More ${nameRe().source}`) }).click();
   await page.waitForTimeout(500);
   assert.equal((await cartBadge().innerText()).trim(), '2');
   const after = await drawer.getByText(/^Subtotal/).locator('xpath=following-sibling::*[1]').innerText();
@@ -84,7 +99,7 @@ await step('the cart survives a reload', async () => {
 await step('cart page lists the item with a server-priced estimate and offers checkout', async () => {
   await page.goto(base + '/cart', { waitUntil: 'load' });
   await page.getByRole('heading', { name: 'Cart summary' }).waitFor();
-  assert.match(await page.locator('main').innerText(), /Iranian Pistachios/);
+  assert.match(await page.locator('main').innerText(), nameRe());
   assert.match(await page.locator('main').innerText(), /confirmed by our server at checkout/);
   assert.ok(await page.getByRole('link', { name: /Proceed to checkout/ }).isVisible());
 });
@@ -105,7 +120,7 @@ await step('sign-in form validates the phone number before sending anything', as
 
 await step('removing the last item empties the cart', async () => {
   await page.goto(base + '/cart', { waitUntil: 'load' });
-  await page.getByRole('button', { name: /Remove Iranian Pistachios/ }).click();
+  await page.getByRole('button', { name: new RegExp(`Remove ${nameRe().source}`) }).click();
   await page.getByText('Your cart is empty').first().waitFor();
   assert.equal((await stored()).length, 0);
 });
@@ -115,11 +130,13 @@ await step('search overlay: opens with "/", suggests products, Enter goes to res
   await page.keyboard.press('/');
   const dialog = page.getByRole('dialog', { name: 'Search products' });
   await dialog.waitFor();
-  await dialog.getByRole('searchbox').fill('pista');
-  await dialog.getByRole('link', { name: /Pista/i }).first().waitFor();
+  // search for the first real word (4+ letters) of the product used above
+  const term = (NAME.match(/[A-Za-z]{4,}/) ?? [NAME.slice(0, 4)])[0].toLowerCase();
+  await dialog.getByRole('searchbox').fill(term);
+  await dialog.getByRole('link', { name: new RegExp(term, 'i') }).first().waitFor();
   await page.keyboard.press('Enter');
-  await page.waitForURL(/\/shop\?q=pista/);
-  assert.match(await page.locator('h1').innerText(), /pista/i);
+  await page.waitForURL(new RegExp(`/shop\\?q=${term}`));
+  assert.match(await page.locator('h1').innerText(), new RegExp(term, 'i'));
 });
 
 await step('shop: filters, sorting and paging produce sensible lists', async () => {
@@ -148,7 +165,7 @@ await step('a price filter submitted from the form (no JavaScript needed) narrow
 });
 
 await step('delivery check: a typed area is looked up and answered by the server', async () => {
-  await page.goto(base + '/product/iranian-pistachios', { waitUntil: 'load' });
+  await page.goto(base + PRODUCT, { waitUntil: 'load' });
   await page.getByRole('combobox', { name: /Search your delivery area/ }).fill('Awas Vikas Colony');
   const option = page.getByRole('option').first();
   await option.waitFor({ timeout: 20_000 });

@@ -7,10 +7,17 @@ const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.spli
 const base = arg('base') ?? 'http://localhost:3000';
 const only = arg('only')?.split(',');
 
+// The catalogue is live data the owner edits, so categories and products are taken from the site's own sitemap instead of being named here.
+const sitemapXml = await (await fetch(`${base}/sitemap.xml`)).text();
+const sitemapPaths = [...sitemapXml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => new URL(m[1]).pathname);
+function livePaths(prefix, count) {
+  return sitemapPaths.filter((p) => p.startsWith(prefix)).slice(0, count);
+}
+
 const ROUTES = [
   '/', '/shop', '/shop?q=almond', '/shop?category=dry-fruits&sort=price-asc', '/shop?page=2', '/shop?min=300&max=700&stock=1',
-  '/category/dry-fruits', '/category/pistachios', '/product/iranian-pistachios', '/product/royal-dry-fruit-gift-box',
-  '/collections', '/collections/gifting', '/gift-hampers', '/bestsellers', '/offers',
+  ...livePaths('/category/', 2), ...livePaths('/product/', 3),
+  '/collections', ...livePaths('/collections/', 1), '/gift-hampers', '/bestsellers', '/offers',
   '/about', '/contact', '/faq', '/shipping', '/refunds', '/privacy', '/terms',
   '/cart', '/login', '/login?next=/checkout',
   '/sitemap.xml', '/robots.txt', '/does-not-exist', '/product/not-a-product', '/category/nope',

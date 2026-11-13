@@ -1,6 +1,6 @@
 import { Mail, MapPin, MessageCircle, Phone } from 'lucide-react';
 import Link from 'next/link';
-import { Wordmark } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 import { FacebookIcon, InstagramIcon } from '../brand/Social';
 import { getStores, clockLabel } from '@/lib/data/storefront';
 import { BRAND, FOOTER_LINKS, contactInfo, dialable } from '@/lib/site';
@@ -30,7 +30,7 @@ export async function Footer() {
       <div className="rule-gold" />
       <div className="container-x grid gap-12 py-16 lg:grid-cols-[1.3fr_1fr_1fr_1fr]">
         <div className="space-y-5">
-          <Link href="/" className="inline-block"><Wordmark light /></Link>
+          <Link href="/" className="inline-block"><Logo height={60} /></Link>
           <p className="max-w-sm text-sm leading-relaxed text-ivory/75">
             Premium dry fruits, spices and gifts from a family shop that has served Agra since {BRAND.since}. Packed fresh at our shops and delivered to your door.
           </p>

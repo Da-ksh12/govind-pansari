@@ -5,7 +5,7 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Link from 'next/link';
 import { useEffect, useRef } from 'react';
-import { Seal } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 import { ProductImage } from '../ui/ProductImage';
 
 export interface HeroProduct {
@@ -99,8 +99,8 @@ export function Hero({ products, deliveryMinutes }: { products: HeroProduct[]; d
             );
           })}
           <div data-speed="0.8" className="absolute -bottom-2 left-[8%] z-10 hidden sm:block">
-            <div className="rise rounded-full bg-maroon-darker p-1.5 shadow-lift ring-1 ring-gold/50" style={{ '--d': '0.9s' } as React.CSSProperties}>
-              <div style={{ animation: 'spin-slow 40s linear infinite' }}><Seal size={92} /></div>
+            <div className="rise overflow-hidden rounded-xl shadow-lift ring-2 ring-gold/50" style={{ '--d': '0.9s' } as React.CSSProperties}>
+              <Logo height={72} alt="" />
             </div>
           </div>
         </div>

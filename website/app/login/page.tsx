@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { LoginFlow } from '@/components/auth/LoginFlow';
-import { Seal } from '@/components/brand/Logo';
+import { Logo } from '@/components/brand/Logo';
 import { safeNext } from '@/lib/links';
 import { currentUserId } from '@/lib/supabase/server';
 
@@ -21,7 +21,7 @@ export default async function LoginPage({ searchParams }: Props) {
         <div className="jaali absolute inset-0 opacity-[0.08]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_30%,rgb(122_28_46),transparent_65%)]" />
         <div className="relative flex h-full flex-col items-center justify-center px-12 text-center">
-          <Seal size={140} />
+          <Logo height={150} alt="" className="shadow-lift" />
           <p className="mt-8 font-display text-5xl leading-tight">A <em className="text-gold">Finer</em> Taste<br />of Nature.</p>
           <p className="eyebrow mt-4 !text-gold">Since 1950 · Agra</p>
         </div>

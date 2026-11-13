@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import { useState } from 'react';
-import { Seal } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 
 interface Props {
   src: string | null | undefined;
@@ -24,7 +24,7 @@ export function ProductImage({ src, alt, sizes, eager = false, className = '', f
   if (!url || failed) {
     return (
       <div className={`grid place-items-center bg-gradient-to-br from-sand to-ivory-deep ${className}`} {...(alt ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}>
-        <Seal size={64} className="opacity-60" />
+        <Logo height={46} alt="" className="opacity-80" />
       </div>
     );
   }

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Reveal } from '../ui/Reveal';
 import { ProductImage } from '../ui/ProductImage';
-import { Seal } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 import { SectionHeading } from '../ui/SectionHeading';
 
 /**
@@ -17,7 +17,7 @@ export function BrandStory({ image }: { image: string | null }) {
           <div className="arch relative aspect-[3/4] border-2 border-gold/50 bg-maroon shadow-lift">
             <ProductImage src={image} alt="A selection from the Govind Pansari shelves" sizes="(min-width: 1024px) 28rem, 90vw" />
           </div>
-          <div className="absolute -bottom-6 -right-2 rounded-full bg-ivory p-1.5 shadow-lift ring-1 ring-gold/40 sm:-right-8"><Seal size={96} /></div>
+          <div className="absolute -bottom-6 -right-2 overflow-hidden rounded-xl shadow-lift ring-2 ring-ivory sm:-right-8"><Logo height={72} alt="" /></div>
         </Reveal>
 
         <div>

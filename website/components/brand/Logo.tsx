@@ -1,19 +1,37 @@
 import Image from 'next/image';
-import { BRAND } from '@/lib/site';
 
-/** The official circular seal (GP monogram, "Est. 1950 · Agra"). It is artwork from the owner, used as-is and never redrawn. */
-export function Seal({ size = 44, className = '' }: { size?: number; className?: string }) {
-  return <Image src="/brand/seal.webp" alt="" width={size} height={size} className={`rounded-full ${className}`} unoptimized />;
+// The Govind Pansari logo exactly as supplied by the owner: white lettering on its own red ground (public/brand/logo.webp, 750 x 355).
+// It is never recoloured, redrawn or cropped here; only its size changes. Every place the site shows the brand mark uses this one component,
+// so replacing the logo later means replacing the files in public/brand/ (and app/icon.png, app/apple-icon.png, app/favicon.ico).
+const LOGO = { src: '/brand/logo.webp', width: 750, height: 355 } as const;
+
+interface LogoProps {
+  /** Height in pixels; the width follows the logo's own proportions. */
+  height?: number;
+  className?: string;
+  /** Pass "" when the logo is decoration next to text that already names the brand. */
+  alt?: string;
+  /** Above-the-fold logos load straight away. */
+  eager?: boolean;
 }
 
-export function Wordmark({ light = false, compact = false }: { light?: boolean; compact?: boolean }) {
+export function Logo({ height = 44, className = '', alt = 'Govind Pansari — Dry Fruits & Spices', eager = false }: LogoProps) {
+  const width = Math.round((height * LOGO.width) / LOGO.height);
   return (
-    <span className="flex items-center gap-2.5">
-      <Seal size={compact ? 36 : 44} />
-      <span className="flex flex-col leading-none">
-        <span className={`font-display text-[1.15rem] font-semibold tracking-tight ${light ? 'text-ivory' : 'text-maroon'}`}>{BRAND.name}</span>
-        {!compact && <span className={`eyebrow mt-1 text-[0.58rem] ${light ? '!text-gold' : ''}`}>Since {BRAND.since} · {BRAND.city}</span>}
-      </span>
-    </span>
+    <Image
+      src={LOGO.src}
+      alt={alt}
+      width={width}
+      height={height}
+      loading={eager ? 'eager' : 'lazy'}
+      // the file is already small and sharp at any size we show it, so it is served as is
+      unoptimized
+      className={`block max-w-none rounded-lg ${className}`}
+    />
   );
+}
+
+/** The logo for the header, the menu and other places the brand appears on its own. */
+export function Wordmark({ compact = false }: { compact?: boolean }) {
+  return <Logo height={compact ? 38 : 48} eager />;
 }

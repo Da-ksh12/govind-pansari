@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { Seal } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 
 /**
  * A short welcome (about a second) shown once per visit. The markup is in the server HTML and hidden by CSS; a tiny inline script in <head>
@@ -28,9 +28,8 @@ export function SplashScreen() {
   return (
     <div id="splash" aria-hidden="true">
       <div className="splash-inner">
-        <Seal size={112} />
-        <p className="font-display mt-5 text-2xl tracking-wide text-ivory">Govind Pansari</p>
-        <p className="eyebrow mt-1 !text-gold">Since 1950 · Agra</p>
+        <Logo height={150} alt="" eager className="shadow-lift" />
+        <p className="eyebrow mt-6 !text-gold">Since 1950 · Agra</p>
         <span className="splash-line" />
       </div>
     </div>

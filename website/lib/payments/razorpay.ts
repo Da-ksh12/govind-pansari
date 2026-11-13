@@ -88,7 +88,7 @@ export async function openRazorpayCheckout(params: RazorpayParams): Promise<Razo
       currency: params.currency,
       name: 'Govind Pansari',
       description: `Order ${params.orderNumber}`,
-      image: `${window.location.origin}/brand/seal.webp`,
+      image: `${window.location.origin}/brand/logo-square.png`,
       prefill: { name: params.customerName, email: params.customerEmail, contact: params.customerPhone },
       theme: { color: '#6e1423' },
       retry: { enabled: true },

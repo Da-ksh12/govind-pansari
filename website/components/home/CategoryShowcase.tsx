@@ -4,7 +4,7 @@ import type { Category } from '@/lib/data/catalogue-source';
 import { pluralize } from '@/lib/format';
 import { Reveal } from '../ui/Reveal';
 import { SectionHeading } from '../ui/SectionHeading';
-import { Seal } from '../brand/Logo';
+import { Logo } from '../brand/Logo';
 
 /**
  * Real categories from the database. The six with the most products get picture tiles (the first two larger) — the shelves a customer is most
@@ -38,7 +38,7 @@ export function CategoryShowcase({ categories }: { categories: Category[] }) {
                   {c.image ? (
                     <Image src={c.image} alt="" fill sizes={big ? '(min-width: 768px) 50vw, 100vw' : '(min-width: 768px) 25vw, 50vw'} className="object-cover transition duration-[1.2s] ease-[var(--ease-premium)] group-hover:scale-110" />
                   ) : (
-                    <span className="absolute inset-0 grid place-items-center bg-gradient-to-br from-maroon to-maroon-darker"><Seal size={72} className="opacity-50" /></span>
+                    <span className="absolute inset-0 grid place-items-center bg-gradient-to-br from-maroon to-maroon-darker"><Logo height={52} alt="" className="opacity-80" /></span>
                   )}
                   <span className="absolute inset-0 bg-gradient-to-t from-maroon-darker/90 via-maroon-darker/25 to-transparent" aria-hidden />
                   <span className="relative p-5 sm:p-6">

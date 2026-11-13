@@ -1,7 +1,7 @@
 import { Gift, Leaf, MapPin, ShieldCheck, Users } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Seal } from '@/components/brand/Logo';
+import { Logo } from '@/components/brand/Logo';
 import { ProductImage } from '@/components/ui/ProductImage';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Reveal } from '@/components/ui/Reveal';
@@ -38,7 +38,7 @@ export default async function AboutPage() {
       <section className="section-pad container-x grid items-center gap-14 lg:grid-cols-2 lg:gap-20">
         <Reveal className="relative mx-auto w-full max-w-md">
           <div className="arch relative aspect-[3/4] border-2 border-gold/50 bg-maroon shadow-lift"><ProductImage src={photo} alt="A bowl of black raisins on a wooden board" sizes="(min-width: 1024px) 28rem, 90vw" /></div>
-          <div className="absolute -bottom-6 -right-2 rounded-full bg-ivory p-1.5 shadow-lift ring-1 ring-gold/40 sm:-right-8"><Seal size={96} /></div>
+          <div className="absolute -bottom-6 -right-2 overflow-hidden rounded-xl shadow-lift ring-2 ring-ivory sm:-right-8"><Logo height={72} alt="" /></div>
         </Reveal>
         <div className="space-y-6 text-lg leading-relaxed text-espresso/80">
           <Reveal><p className="font-display text-3xl leading-snug text-maroon">Three generations. One counter that became a name Agra trusts.</p></Reveal>
